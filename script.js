@@ -53,6 +53,14 @@ const investigationActions = [
   { id: "records", label: "Check Records", symbol: "#", cost: 4, description: "Review asset, access, location, and prior tickets." }
 ];
 
+const channelStatus = [
+  { id: "Phone", label: "Phones" },
+  { id: "Chat", label: "Chat" },
+  { id: "Ticket", label: "Tickets" },
+  { id: "Monitoring", label: "Alerts" },
+  { id: "Walk-up", label: "Walk-ups" }
+];
+
 const cases = [
   {
     id: "exec-mfa",
@@ -349,7 +357,7 @@ const initialState = {
   selectedId: null,
   selectedDiagnosis: null,
   selectedCategory: null,
-  selectedPriority: "P3",
+  selectedPriority: null,
   selectedTroubleshooting: [],
   resources: {
     security: { label: "Security analysts", remaining: 3, max: 3 },
@@ -364,7 +372,7 @@ const initialState = {
     budget: 72
   },
   feed: [
-    { minute: START_MINUTE, title: "Shift started", text: "Tickets, calls, chats, monitoring alerts, and walk-ups are live.", tone: "neutral" }
+    { minute: START_MINUTE, title: "Desk ready", text: "Start the shift to receive calls, tickets, chats, monitoring alerts, and walk-ups.", tone: "neutral" }
   ],
   scheduled: [],
   cases: cases.map((item) => ({
@@ -392,10 +400,15 @@ const els = {
   feed: document.querySelector("#feed"),
   caseTitle: document.querySelector("#caseTitle"),
   caseStatus: document.querySelector("#caseStatus"),
+  stageTitle: document.querySelector("#stageTitle"),
+  stageHint: document.querySelector("#stageHint"),
+  stageMissing: document.querySelector("#stageMissing"),
+  channelStatus: document.querySelector("#channelStatus"),
   caseFacts: document.querySelector("#caseFacts"),
   evidenceLog: document.querySelector("#evidenceLog"),
   rulesList: document.querySelector("#rulesList"),
   workflowSteps: document.querySelector("#workflowSteps"),
+  workflowHint: document.querySelector("#workflowHint"),
   investigationActions: document.querySelector("#investigationActions"),
   priorityControl: document.querySelector("#priorityControl"),
   diagnosisControl: document.querySelector("#diagnosisControl"),
@@ -430,6 +443,10 @@ function activeRules() {
 
 function availableCases() {
   return state.cases.filter((item) => item.arrival <= state.time);
+}
+
+function futureCases() {
+  return state.cases.filter((item) => item.arrival > state.time);
 }
 
 function openCases() {
@@ -493,8 +510,67 @@ function processScheduled() {
 function syncSelectionFromCase(caseItem) {
   state.selectedDiagnosis = caseItem ? caseItem.diagnosis : null;
   state.selectedCategory = caseItem ? caseItem.category : null;
-  state.selectedPriority = caseItem ? (caseItem.priority || "P3") : "P3";
+  state.selectedPriority = caseItem ? caseItem.priority : null;
   state.selectedTroubleshooting = caseItem ? [...caseItem.troubleshooting] : [];
+}
+
+function currentStage(item) {
+  if (!item) {
+    return {
+      id: "start",
+      title: "Start Shift",
+      hint: "Start the shift to receive calls, tickets, chats, alerts, and walk-ups.",
+      missing: ["Start shift"]
+    };
+  }
+
+  if (item.status === "resolved") {
+    return {
+      id: "follow",
+      title: "Waiting For Consequences",
+      hint: "This ticket is closed. Watch the supervisor feed and queue for follow-up work.",
+      missing: []
+    };
+  }
+
+  if (item.revealed.length === 1) {
+    return {
+      id: "investigate",
+      title: "Gather Evidence",
+      hint: "Review the report, then verify identity, ask a question, run diagnostics, or check records.",
+      missing: ["Evidence"]
+    };
+  }
+
+  const missing = [];
+  if (!item.diagnosis) missing.push("Diagnosis");
+  if (!item.category) missing.push("Category");
+  if (!item.priority) missing.push("Priority");
+
+  if (missing.length) {
+    return {
+      id: "classify",
+      title: "Assign Category And Priority",
+      hint: "Commit to what is wrong, which queue owns it, and how urgent it is.",
+      missing
+    };
+  }
+
+  if (!item.troubleshooting.length) {
+    return {
+      id: "troubleshoot",
+      title: "Choose Troubleshooting Step",
+      hint: "Pick the concrete action you would defend in the ticket notes. Each step spends time.",
+      missing: ["Troubleshooting"]
+    };
+  }
+
+  return {
+    id: "close",
+    title: "Choose Final Action",
+    hint: "Resolve, escalate, dispatch, deny, or postpone based on the evidence and selected fix.",
+    missing: ["Final action"]
+  };
 }
 
 function reveal(caseItem, actionId) {
@@ -590,7 +666,7 @@ function resolveCurrent(resolutionId) {
   state.selectedId = next ? next.id : current.id;
   state.selectedDiagnosis = next ? next.diagnosis : current.diagnosis;
   state.selectedCategory = next ? next.category : current.category;
-  state.selectedPriority = next ? (next.priority || "P3") : current.priority;
+  state.selectedPriority = next ? next.priority : current.priority;
   state.selectedTroubleshooting = next ? [...next.troubleshooting] : [...current.troubleshooting];
   render();
 }
@@ -770,38 +846,76 @@ function render() {
   els.queueCount.textContent = available.length;
   els.openCount.textContent = open.length;
 
+  renderShiftControl(available);
   renderQueue(available);
+  renderChannelStatus(open);
   renderResources();
   renderMetrics();
   renderFeed();
   renderRules();
   renderCase(current);
+  renderStageBar(current);
   renderWorkflow(current);
   renderActions(current);
   renderDecision(current);
 }
 
+function renderShiftControl(available) {
+  const noArrivalsYet = available.length === 0 && state.time === START_MINUTE;
+  els.advanceTime.textContent = noArrivalsYet ? "Start Shift" : "Wait 10m";
+  els.advanceTime.title = noArrivalsYet ? "Start shift" : "Wait 10 minutes";
+  els.advanceTime.setAttribute("aria-label", els.advanceTime.title);
+}
+
+function renderStageBar(item) {
+  const stage = currentStage(item);
+  els.stageTitle.textContent = stage.title;
+  els.stageHint.textContent = stage.hint;
+  els.stageMissing.innerHTML = stage.missing.map((missing) => `<span>${missing}</span>`).join("");
+}
+
+function renderChannelStatus(open) {
+  const counts = channelStatus.map((channel) => ({
+    ...channel,
+    count: open.filter((item) => item.channel === channel.id).length
+  }));
+
+  els.channelStatus.innerHTML = counts.map((channel) => `
+    <div class="channel-tile ${channel.count ? "active" : ""}">
+      <span>${channel.label}</span>
+      <strong>${channel.count}</strong>
+    </div>
+  `).join("") + `
+    <div class="channel-tile ${state.resources.field.remaining < state.resources.field.max ? "active" : ""}">
+      <span>Dispatch</span>
+      <strong>${state.resources.field.remaining}</strong>
+    </div>
+  `;
+}
+
 function renderWorkflow(item) {
+  const stage = currentStage(item);
   const stages = [
-    { id: "ticket", label: "Ticket arrives", done: Boolean(item), active: !item },
-    { id: "review", label: "Review user, device, symptoms, history", done: Boolean(item), active: Boolean(item && item.revealed.length === 1 && item.status !== "resolved") },
-    { id: "investigate", label: "Ask questions or run diagnostics", done: Boolean(item && item.revealed.length > 1), active: Boolean(item && item.revealed.length === 1 && item.status !== "resolved") },
-    { id: "classify", label: "Assign priority and category", done: Boolean(item && item.priority && item.category && item.diagnosis), active: Boolean(item && item.revealed.length > 1 && (!item.priority || !item.category || !item.diagnosis)) },
-    { id: "troubleshoot", label: "Choose troubleshooting steps", done: Boolean(item && item.troubleshooting.length), active: Boolean(item && item.priority && item.category && item.diagnosis && !item.troubleshooting.length) },
-    { id: "close", label: "Resolve, escalate, dispatch, deny, postpone", done: Boolean(item && item.status === "resolved"), active: Boolean(item && item.troubleshooting.length && item.status !== "resolved") },
-    { id: "follow", label: "Consequences and follow-up tickets", done: Boolean(item && item.status === "resolved"), active: false }
+    { id: "ticket", label: "Arrive", full: "Ticket arrives", done: Boolean(item), active: stage.id === "start" },
+    { id: "review", label: "Review", full: "Review user, device, symptoms, history", done: Boolean(item), active: stage.id === "investigate" },
+    { id: "investigate", label: "Investigate", full: "Ask questions or run diagnostics", done: Boolean(item && item.revealed.length > 1), active: stage.id === "investigate" },
+    { id: "classify", label: "Classify", full: "Assign priority and category", done: Boolean(item && item.priority && item.category && item.diagnosis), active: stage.id === "classify" },
+    { id: "troubleshoot", label: "Troubleshoot", full: "Choose troubleshooting steps", done: Boolean(item && item.troubleshooting.length), active: stage.id === "troubleshoot" },
+    { id: "close", label: "Close", full: "Resolve, escalate, dispatch, deny, postpone", done: Boolean(item && item.status === "resolved"), active: stage.id === "close" },
+    { id: "follow", label: "Follow up", full: "Consequences and follow-up tickets", done: Boolean(item && item.status === "resolved"), active: stage.id === "follow" }
   ];
 
   els.workflowSteps.innerHTML = stages.map((stage, index) => {
     const className = stage.done ? "done" : stage.active ? "active" : "";
     const marker = stage.done ? "OK" : String(index + 1);
-    return `<li class="workflow-step ${className}"><span>${marker}</span><strong>${stage.label}</strong></li>`;
+    return `<li class="workflow-step ${className}" title="${stage.full}"><span>${marker}</span><strong>${stage.label}</strong></li>`;
   }).join("");
+  els.workflowHint.textContent = stage.hint;
 }
 
 function renderQueue(items) {
   if (!items.length) {
-    els.queueList.innerHTML = `<p class="queue-meta">No work has arrived yet. Wait for the shift to warm up.</p>`;
+    els.queueList.innerHTML = `<p class="queue-meta">Shift not started. Press Start Shift to receive the first call, ticket, chat, alert, or walk-up.</p>`;
     return;
   }
 
@@ -881,10 +995,13 @@ function renderRules() {
 
 function renderCase(item) {
   if (!item) {
-    els.caseTitle.textContent = "No active incident";
-    els.caseStatus.textContent = "Stand by";
-    els.caseFacts.innerHTML = `<dt>Status</dt><dd>Wait for work to arrive.</dd>`;
-    els.evidenceLog.innerHTML = `<p class="queue-meta">Evidence appears here as you inspect, verify, and run diagnostics.</p>`;
+    els.caseTitle.textContent = "Shift not started";
+    els.caseStatus.textContent = "Ready";
+    els.caseFacts.innerHTML = `
+      <dt>Status</dt><dd>Desk staffed and monitoring systems idle.</dd>
+      <dt>Next</dt><dd>Start the shift to receive live work.</dd>
+    `;
+    els.evidenceLog.innerHTML = `<p class="queue-meta">Evidence appears here after a ticket, call, chat, alert, or walk-up arrives.</p>`;
     return;
   }
 
@@ -935,6 +1052,10 @@ function renderActions(item) {
 
 function renderDecision(item) {
   const disabled = !item || item.status === "resolved";
+  const missingClassification = !item || !item.diagnosis || !item.category || !item.priority;
+  const troubleshootDisabled = disabled || missingClassification;
+  const resolutionDisabled = troubleshootDisabled || !item.troubleshooting.length;
+
   els.diagnosisControl.innerHTML = diagnosisOptions.map((diagnosis) => `
     <button data-diagnosis="${diagnosis.id}" class="${state.selectedDiagnosis === diagnosis.id ? "selected" : ""}" ${disabled ? "disabled" : ""}>${diagnosis.label}</button>
   `).join("");
@@ -948,14 +1069,14 @@ function renderDecision(item) {
   `).join("");
 
   els.troubleshootControl.innerHTML = troubleshootingOptions.map((step) => `
-    <button data-troubleshoot="${step.id}" class="${state.selectedTroubleshooting.includes(step.id) ? "selected" : ""}" ${disabled ? "disabled" : ""}>
+    <button data-troubleshoot="${step.id}" class="${state.selectedTroubleshooting.includes(step.id) ? "selected" : ""}" ${troubleshootDisabled ? "disabled" : ""}>
       ${step.label}
       <small>${step.cost}m</small>
     </button>
   `).join("");
 
   els.resolutionGrid.innerHTML = resolutionOptions.map((option) => `
-    <button class="resolution-button" data-resolution="${option.id}" ${disabled ? "disabled" : ""}>
+    <button class="resolution-button" data-resolution="${option.id}" ${resolutionDisabled ? "disabled" : ""}>
       ${option.label}
       <small>${option.cost}m${option.resource ? ` | ${state.resources[option.resource].remaining} left` : ""}</small>
     </button>
@@ -978,7 +1099,15 @@ function renderDecision(item) {
   });
 }
 
-els.advanceTime.addEventListener("click", () => advance(10));
+els.advanceTime.addEventListener("click", () => {
+  const available = availableCases();
+  if (!available.length && futureCases().length) {
+    const nextArrival = Math.min(...futureCases().map((item) => item.arrival));
+    advance(Math.max(1, nextArrival - state.time));
+    return;
+  }
+  advance(10);
+});
 els.endShift.addEventListener("click", endShift);
 els.restartGame.addEventListener("click", restartGame);
 

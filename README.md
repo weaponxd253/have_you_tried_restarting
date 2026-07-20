@@ -14,4 +14,6 @@ The player works a live shift where tickets, phone calls, chat messages, monitor
 
 Each choice spends shift time, consumes limited resources, and affects trust, security posture, SLA health, and budget.
 
+The current layout emphasizes the active ticket stage, with classification visible above the fold, compact channel pressure, and follow-up work returning to the live queue.
+
 Open `index.html` in a browser to play the current prototype.
