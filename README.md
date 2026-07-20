@@ -16,4 +16,6 @@ Each choice spends shift time, consumes limited resources, and affects trust, se
 
 The current layout emphasizes the active ticket stage, with classification visible above the fold, compact channel pressure, and follow-up work returning to the live queue.
 
+Gameplay readability features include queue signal tags, active-ticket risk lens, evidence progress, requirement status chips, clearer disabled-control hints, and richer investigation feedback.
+
 Open `index.html` in a browser to play the current prototype.

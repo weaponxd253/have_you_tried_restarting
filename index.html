@@ -56,6 +56,7 @@
           <div>
             <p class="eyebrow">Selected Incident</p>
             <h2 id="caseTitle">No active incident</h2>
+            <div id="caseSignals" class="signal-list"></div>
           </div>
           <div class="status-pill" id="caseStatus">Stand by</div>
         </div>
@@ -66,7 +67,11 @@
             <h2 id="stageTitle">Start Shift</h2>
           </div>
           <p id="stageHint">Start the shift to receive calls, tickets, chats, alerts, and walk-ups.</p>
-          <div id="stageMissing" class="missing-list"></div>
+          <div class="stage-right">
+            <div id="evidenceProgress" class="evidence-progress"></div>
+            <div id="stageMissing" class="missing-list"></div>
+            <div id="requirementStatus" class="requirement-status"></div>
+          </div>
         </section>
 
         <div class="channel-strip" id="channelStatus" aria-label="Channel status">
@@ -83,6 +88,7 @@
           </section>
           <section class="panel classification-panel">
             <h2>Classification</h2>
+            <div id="riskLens" class="risk-lens"></div>
             <div class="decision-group">
               <span class="group-label">Diagnosis</span>
               <div class="diagnosis-control" id="diagnosisControl" role="group" aria-label="Diagnosis"></div>
@@ -117,10 +123,12 @@
           </div>
           <div class="decision-group">
             <span class="group-label">Troubleshooting</span>
+            <p class="control-helper" id="troubleshootHelper">Classify the ticket before choosing troubleshooting.</p>
             <div class="troubleshoot-control" id="troubleshootControl" role="group" aria-label="Troubleshooting step"></div>
           </div>
           <div class="decision-group">
             <span class="group-label">Final Action</span>
+            <p class="control-helper" id="resolutionHelper">Choose a troubleshooting step before closing the ticket.</p>
             <div class="resolution-grid" id="resolutionGrid"></div>
           </div>
         </section>

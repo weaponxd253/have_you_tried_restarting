@@ -70,6 +70,8 @@ const cases = [
     requester: "Mira Vale",
     department: "Executive Office",
     location: "External phone number",
+    signals: ["External caller", "VIP pressure", "Security risk"],
+    risk: { security: "High", impact: "Executive access", verification: "Failed", sla: "Rising" },
     report: "Caller says the CEO is locked out before an acquisition call and demands an MFA bypass right now.",
     facts: {
       Asset: "No managed device presented",
@@ -105,6 +107,8 @@ const cases = [
     requester: "Nolan Reed",
     department: "Shipping",
     location: "Warehouse B",
+    signals: ["Multi-user impact", "Operations blocked", "Dispatch candidate"],
+    risk: { security: "Low", impact: "Warehouse outage", verification: "Trusted source", sla: "Critical" },
     report: "Ten handheld scanners froze after the morning update. Trucks are waiting at the dock.",
     facts: {
       Asset: "Scanner pool WH-B",
@@ -140,6 +144,8 @@ const cases = [
     requester: "Edge monitor",
     department: "Infrastructure",
     location: "Remote workforce",
+    signals: ["Monitoring alert", "Multi-region", "Call flood risk"],
+    risk: { security: "Medium", impact: "Remote workforce", verification: "Trusted monitor", sla: "Critical" },
     report: "VPN authentication failures jumped across three regions. Individual users are starting to call in.",
     facts: {
       Asset: "VPN concentrators",
@@ -175,6 +181,8 @@ const cases = [
     requester: "Jules Tan",
     department: "Finance contractor",
     location: "12th floor help counter",
+    signals: ["Walk-up", "Restricted data", "Unmanaged device"],
+    risk: { security: "High", impact: "Payroll data", verification: "Unverified", sla: "Low" },
     report: "Contractor says their manager is in a board meeting and asked them to pull a payroll export from a restricted share.",
     facts: {
       Asset: "Personal laptop at counter",
@@ -210,6 +218,8 @@ const cases = [
     requester: "Ari Gomez",
     department: "Sales",
     location: "Boardroom 4A",
+    signals: ["Revenue impact", "Time pressure", "Dispatch candidate"],
+    risk: { security: "Low", impact: "Customer demo", verification: "Likely valid", sla: "Rising" },
     report: "A customer demo starts in 25 minutes. The room display shows no signal from any laptop.",
     facts: {
       Asset: "Boardroom 4A AV kit",
@@ -245,6 +255,8 @@ const cases = [
     requester: "Leah Ortiz",
     department: "Accounts Payable",
     location: "HQ 8W",
+    signals: ["Security risk", "Payment access", "Endpoint alert"],
+    risk: { security: "High", impact: "Payment workflow", verification: "Verified caller", sla: "Critical" },
     report: "User opened an invoice attachment from a new vendor. Browser popups and a fake antivirus page appeared.",
     facts: {
       Asset: "AP-LAP-184",
@@ -280,6 +292,8 @@ const cases = [
     requester: "Priya Shah",
     department: "Customer Care",
     location: "Remote",
+    signals: ["Security risk", "Business critical", "External forwarding"],
+    risk: { security: "High", impact: "Customer refunds", verification: "Portal request", sla: "Critical" },
     report: "Messages disappear from the shared support mailbox minutes after arrival.",
     facts: {
       Asset: "support@ mailbox",
@@ -315,6 +329,8 @@ const cases = [
     requester: "Evan Brooks",
     department: "People Ops",
     location: "HQ lobby",
+    signals: ["Onboarding", "Asset custody", "Time pressure"],
+    risk: { security: "Medium", impact: "New hire start", verification: "Trusted source", sla: "Rising" },
     report: "A new engineer starts in one hour. The assigned laptop is still in imaging and People Ops wants any spare handed over.",
     facts: {
       Asset: "ENG-LAP-302",
@@ -399,13 +415,17 @@ const els = {
   metricList: document.querySelector("#metricList"),
   feed: document.querySelector("#feed"),
   caseTitle: document.querySelector("#caseTitle"),
+  caseSignals: document.querySelector("#caseSignals"),
   caseStatus: document.querySelector("#caseStatus"),
   stageTitle: document.querySelector("#stageTitle"),
   stageHint: document.querySelector("#stageHint"),
   stageMissing: document.querySelector("#stageMissing"),
+  evidenceProgress: document.querySelector("#evidenceProgress"),
+  requirementStatus: document.querySelector("#requirementStatus"),
   channelStatus: document.querySelector("#channelStatus"),
   caseFacts: document.querySelector("#caseFacts"),
   evidenceLog: document.querySelector("#evidenceLog"),
+  riskLens: document.querySelector("#riskLens"),
   rulesList: document.querySelector("#rulesList"),
   workflowSteps: document.querySelector("#workflowSteps"),
   workflowHint: document.querySelector("#workflowHint"),
@@ -416,6 +436,8 @@ const els = {
   troubleshootControl: document.querySelector("#troubleshootControl"),
   resolutionGrid: document.querySelector("#resolutionGrid"),
   actionHint: document.querySelector("#actionHint"),
+  troubleshootHelper: document.querySelector("#troubleshootHelper"),
+  resolutionHelper: document.querySelector("#resolutionHelper"),
   advanceTime: document.querySelector("#advanceTime"),
   endShift: document.querySelector("#endShift"),
   summaryModal: document.querySelector("#summaryModal"),
@@ -435,6 +457,37 @@ function formatTime(minute) {
 
 function labelFor(options, id) {
   return options.find((item) => item.id === id)?.label || "Unclassified";
+}
+
+function evidenceCount(item) {
+  return item ? item.evidence.length + Math.max(0, item.revealed.length - 1) : 0;
+}
+
+function evidenceTotal(item) {
+  return item ? item.evidence.length + Object.keys(item.reveals).length : 0;
+}
+
+function requirementItems(item) {
+  return [
+    { id: "verify", label: "Identity", done: Boolean(item && item.revealed.includes("verify")) },
+    { id: "diagnosis", label: "Diagnosis", done: Boolean(item && item.diagnosis) },
+    { id: "category", label: "Category", done: Boolean(item && item.category) },
+    { id: "priority", label: "Priority", done: Boolean(item && item.priority) },
+    { id: "troubleshooting", label: "Troubleshooting", done: Boolean(item && item.troubleshooting.length) }
+  ];
+}
+
+function stageLabel(item) {
+  return currentStage(item).title;
+}
+
+function signalTags(item) {
+  if (!item) return [];
+  const tags = [...(item.signals || [])];
+  if (item.isFollowUp && !tags.includes("Follow-up")) {
+    tags.unshift("Follow-up");
+  }
+  return tags;
 }
 
 function activeRules() {
@@ -579,7 +632,9 @@ function reveal(caseItem, actionId) {
   }
   caseItem.revealed.push(actionId);
   const action = investigationActions.find((item) => item.id === actionId);
-  addFeed(action.label, `${caseItem.title}: ${caseItem.reveals[actionId].text}`, caseItem.reveals[actionId].tone === "risk" ? "bad" : "good");
+  const entry = caseItem.reveals[actionId];
+  const progress = `Evidence ${evidenceCount(caseItem)}/${evidenceTotal(caseItem)}`;
+  addFeed(action.label, `${caseItem.title}: ${entry.source} added. ${progress}. ${entry.text}`, entry.tone === "risk" ? "bad" : "good");
   advance(action.cost);
 }
 
@@ -710,6 +765,13 @@ function makeFollowUpCase(caseItem, good, minute) {
     requester: good ? "Supervisor desk" : "Incident manager",
     department: caseItem.department,
     location: caseItem.location,
+    signals: good ? ["Follow-up", "Documentation", "Closure check"] : ["Follow-up", "Corrective action", caseItem.securityRisk ? "Security risk" : "SLA risk"],
+    risk: {
+      security: good ? "Low" : (caseItem.securityRisk ? "High" : "Medium"),
+      impact: good ? "Handoff quality" : "Service recovery",
+      verification: "Ticket-linked",
+      sla: good ? "Low" : "Rising"
+    },
     report: good
       ? "The incident is stable. Confirm the user impact is closed, document what changed, and leave a clean handoff."
       : "The earlier decision created fallout. Re-check the record, contain remaining risk, and route the corrective action.",
@@ -872,6 +934,10 @@ function renderStageBar(item) {
   els.stageTitle.textContent = stage.title;
   els.stageHint.textContent = stage.hint;
   els.stageMissing.innerHTML = stage.missing.map((missing) => `<span>${missing}</span>`).join("");
+  els.evidenceProgress.textContent = item ? `Evidence ${evidenceCount(item)}/${evidenceTotal(item)}` : "Evidence 0/0";
+  els.requirementStatus.innerHTML = requirementItems(item).map((requirement) => `
+    <span class="${requirement.done ? "done" : ""}">${requirement.done ? "OK" : "--"} ${requirement.label}</span>
+  `).join("");
 }
 
 function renderChannelStatus(open) {
@@ -923,13 +989,19 @@ function renderQueue(items) {
     const active = item.id === state.selectedId ? " active" : "";
     const resolved = item.status === "resolved" ? " resolved" : "";
     const age = Math.max(0, state.time - item.arrival);
+    const stage = stageLabel(item);
+    const warning = item.securityRisk && !item.revealed.includes("verify") && item.status !== "resolved";
     return `
       <button class="queue-item${active}${resolved}" data-select="${item.id}">
-        <span>
+        <span class="queue-main">
           <strong>${item.title}</strong>
           <span class="queue-meta">${formatTime(item.arrival)} arrival | ${age}m old | ${item.requester}</span>
+          <span class="queue-stage">${stage}${warning ? " | Verify before access changes" : ""}</span>
+          <span class="signal-list queue-signals">
+            ${signalTags(item).slice(0, 3).map((tag) => `<span>${tag}</span>`).join("")}
+          </span>
         </span>
-        <span>
+        <span class="queue-badges">
           <span class="channel-badge">${item.channel}</span>
           ${item.category ? `<span class="category-badge">${labelFor(categoryOptions, item.category)}</span>` : ""}
           ${item.priority ? `<span class="priority-badge">${item.priority}</span>` : ""}
@@ -996,16 +1068,19 @@ function renderRules() {
 function renderCase(item) {
   if (!item) {
     els.caseTitle.textContent = "Shift not started";
+    els.caseSignals.innerHTML = "";
     els.caseStatus.textContent = "Ready";
     els.caseFacts.innerHTML = `
       <dt>Status</dt><dd>Desk staffed and monitoring systems idle.</dd>
       <dt>Next</dt><dd>Start the shift to receive live work.</dd>
     `;
     els.evidenceLog.innerHTML = `<p class="queue-meta">Evidence appears here after a ticket, call, chat, alert, or walk-up arrives.</p>`;
+    renderRiskLens(null);
     return;
   }
 
   els.caseTitle.textContent = item.title;
+  els.caseSignals.innerHTML = signalTags(item).map((tag) => `<span>${tag}</span>`).join("");
   els.caseStatus.textContent = item.status === "resolved" ? `Resolved: ${item.score}` : `${item.channel} | ${formatTime(item.arrival)}`;
   els.caseFacts.innerHTML = `
     <dt>Requester</dt><dd>${item.requester}</dd>
@@ -1028,6 +1103,26 @@ function renderCase(item) {
       <p>${entry.text}</p>
     </article>
   `).join("");
+  renderRiskLens(item);
+}
+
+function renderRiskLens(item) {
+  if (!item) {
+    els.riskLens.innerHTML = `
+      <div><span>Security</span><strong>Idle</strong></div>
+      <div><span>Impact</span><strong>None</strong></div>
+      <div><span>Verification</span><strong>None</strong></div>
+      <div><span>SLA</span><strong>None</strong></div>
+    `;
+    return;
+  }
+
+  els.riskLens.innerHTML = `
+    <div class="${item.risk.security === "High" ? "risk-high" : item.risk.security === "Medium" ? "risk-medium" : ""}"><span>Security</span><strong>${item.risk.security}</strong></div>
+    <div><span>Impact</span><strong>${item.risk.impact}</strong></div>
+    <div><span>Verification</span><strong>${item.risk.verification}</strong></div>
+    <div class="${item.risk.sla === "Critical" ? "risk-high" : item.risk.sla === "Rising" ? "risk-medium" : ""}"><span>SLA</span><strong>${item.risk.sla}</strong></div>
+  `;
 }
 
 function renderActions(item) {
@@ -1055,6 +1150,21 @@ function renderDecision(item) {
   const missingClassification = !item || !item.diagnosis || !item.category || !item.priority;
   const troubleshootDisabled = disabled || missingClassification;
   const resolutionDisabled = troubleshootDisabled || !item.troubleshooting.length;
+  const missingNames = requirementItems(item).filter((requirement) => ["diagnosis", "category", "priority"].includes(requirement.id) && !requirement.done).map((requirement) => requirement.label);
+
+  if (disabled) {
+    els.troubleshootHelper.textContent = item && item.status === "resolved" ? "Ticket already resolved." : "Select an unresolved incident.";
+    els.resolutionHelper.textContent = item && item.status === "resolved" ? "Ticket already resolved." : "Select an unresolved incident.";
+  } else if (missingClassification) {
+    els.troubleshootHelper.textContent = `Classify first: ${missingNames.join(", ")} missing.`;
+    els.resolutionHelper.textContent = "Choose troubleshooting before closing.";
+  } else if (!item.troubleshooting.length) {
+    els.troubleshootHelper.textContent = "Choose at least one concrete troubleshooting step.";
+    els.resolutionHelper.textContent = "Final action unlocks after troubleshooting.";
+  } else {
+    els.troubleshootHelper.textContent = "Troubleshooting selected. Additional steps spend more shift time.";
+    els.resolutionHelper.textContent = "Ready to choose the final path.";
+  }
 
   els.diagnosisControl.innerHTML = diagnosisOptions.map((diagnosis) => `
     <button data-diagnosis="${diagnosis.id}" class="${state.selectedDiagnosis === diagnosis.id ? "selected" : ""}" ${disabled ? "disabled" : ""}>${diagnosis.label}</button>
