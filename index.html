@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Have You Tried Restarting?</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Northstar Systems Help Desk</p>
+        <h1>Have You Tried Restarting?</h1>
+      </div>
+      <div class="shift-stats" aria-label="Shift status">
+        <div>
+          <span>Clock</span>
+          <strong id="clock">08:00</strong>
+        </div>
+        <div>
+          <span>Queue</span>
+          <strong id="queueCount">0</strong>
+        </div>
+        <div>
+          <span>Open</span>
+          <strong id="openCount">0</strong>
+        </div>
+      </div>
+    </header>
+
+    <main class="command-center">
+      <aside class="left-rail" aria-label="Incoming work">
+        <section class="panel queue-panel">
+          <div class="panel-heading">
+            <h2>Live Queue</h2>
+            <button class="icon-button shift-button" id="advanceTime" title="Start shift" aria-label="Start shift">Start Shift</button>
+          </div>
+          <div id="queueList" class="queue-list"></div>
+        </section>
+
+        <section class="panel resources-panel">
+          <h2>Resources</h2>
+          <div id="resourceList" class="resource-list"></div>
+        </section>
+
+        <section class="panel workflow-panel">
+          <h2>Shift Flow</h2>
+          <ol id="workflowSteps" class="workflow-list"></ol>
+          <p id="workflowHint" class="workflow-hint">Start the shift to begin the queue.</p>
+        </section>
+      </aside>
+
+      <section class="workbench" aria-label="Case workbench">
+        <div class="case-banner" id="caseBanner">
+          <div>
+            <p class="eyebrow">Selected Incident</p>
+            <h2 id="caseTitle">No active incident</h2>
+          </div>
+          <div class="status-pill" id="caseStatus">Stand by</div>
+        </div>
+
+        <section class="stage-bar" aria-live="polite">
+          <div>
+            <p class="eyebrow">Current Stage</p>
+            <h2 id="stageTitle">Start Shift</h2>
+          </div>
+          <p id="stageHint">Start the shift to receive calls, tickets, chats, alerts, and walk-ups.</p>
+          <div id="stageMissing" class="missing-list"></div>
+        </section>
+
+        <div class="channel-strip" id="channelStatus" aria-label="Channel status">
+        </div>
+
+        <div class="evidence-grid">
+          <section class="panel">
+            <h2>Report</h2>
+            <dl class="case-facts" id="caseFacts"></dl>
+          </section>
+          <section class="panel">
+            <h2>Evidence</h2>
+            <div id="evidenceLog" class="evidence-log"></div>
+          </section>
+          <section class="panel classification-panel">
+            <h2>Classification</h2>
+            <div class="decision-group">
+              <span class="group-label">Diagnosis</span>
+              <div class="diagnosis-control" id="diagnosisControl" role="group" aria-label="Diagnosis"></div>
+            </div>
+            <div class="decision-group">
+              <span class="group-label">Category</span>
+              <div class="category-control" id="categoryControl" role="group" aria-label="Category"></div>
+            </div>
+            <div class="decision-group">
+              <span class="group-label">Priority</span>
+              <div class="priority-control" id="priorityControl" role="group" aria-label="Priority"></div>
+            </div>
+          </section>
+          <section class="panel rules-panel">
+            <h2>Shift Rules</h2>
+            <ul id="rulesList"></ul>
+          </section>
+        </div>
+
+        <section class="panel actions-panel">
+          <div class="panel-heading">
+            <h2>Investigation</h2>
+            <span id="actionHint">Pick an incident from the queue.</span>
+          </div>
+          <div class="action-grid" id="investigationActions"></div>
+        </section>
+
+        <section class="panel decision-panel">
+          <div>
+            <h2>Troubleshoot And Close</h2>
+            <p>Choose the technical step, then resolve, escalate, dispatch, deny, or postpone.</p>
+          </div>
+          <div class="decision-group">
+            <span class="group-label">Troubleshooting</span>
+            <div class="troubleshoot-control" id="troubleshootControl" role="group" aria-label="Troubleshooting step"></div>
+          </div>
+          <div class="decision-group">
+            <span class="group-label">Final Action</span>
+            <div class="resolution-grid" id="resolutionGrid"></div>
+          </div>
+        </section>
+      </section>
+
+      <aside class="right-rail" aria-label="Shift feedback">
+        <section class="panel score-panel">
+          <h2>Shift Health</h2>
+          <div id="metricList" class="metric-list"></div>
+        </section>
+        <section class="panel">
+          <div class="panel-heading">
+            <h2>Supervisor Feed</h2>
+            <button class="icon-button" id="endShift" title="End shift" aria-label="End shift">End</button>
+          </div>
+          <div id="feed" class="feed"></div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <div class="modal-backdrop hidden" id="summaryModal">
+    <section class="summary-modal" role="dialog" aria-modal="true" aria-labelledby="summaryTitle">
+      <h2 id="summaryTitle">Shift Summary</h2>
+      <div id="summaryBody"></div>
+      <button id="restartGame" class="primary-button">Start another shift</button>
+    </section>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
