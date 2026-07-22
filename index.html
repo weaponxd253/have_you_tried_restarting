@@ -74,21 +74,29 @@
           </div>
         </section>
 
+        <section class="next-action-bar" aria-live="polite">
+          <div>
+            <p class="eyebrow">Next Action</p>
+            <h2 id="nextActionTitle">Start Shift</h2>
+          </div>
+          <p id="nextActionHint">Start the shift to receive live work.</p>
+          <button class="primary-button next-action-button" id="nextActionButton">Start Shift</button>
+        </section>
+
         <div class="channel-strip" id="channelStatus" aria-label="Channel status">
         </div>
 
         <div class="evidence-grid">
-          <section class="panel">
+          <section class="panel report-panel" id="reportPanel" tabindex="-1">
             <h2>Report</h2>
             <dl class="case-facts" id="caseFacts"></dl>
           </section>
-          <section class="panel">
+          <section class="panel evidence-panel" id="evidencePanel" tabindex="-1">
             <h2>Evidence</h2>
             <div id="evidenceLog" class="evidence-log"></div>
           </section>
-          <section class="panel classification-panel">
+          <section class="panel classification-panel" id="classificationPanel" tabindex="-1">
             <h2>Classification</h2>
-            <div id="riskLens" class="risk-lens"></div>
             <div class="decision-group">
               <span class="group-label">Diagnosis</span>
               <div class="diagnosis-control" id="diagnosisControl" role="group" aria-label="Diagnosis"></div>
@@ -101,14 +109,18 @@
               <span class="group-label">Priority</span>
               <div class="priority-control" id="priorityControl" role="group" aria-label="Priority"></div>
             </div>
+            <div class="decision-group risk-lens-group">
+              <span class="group-label">Risk Lens</span>
+              <div id="riskLens" class="risk-lens"></div>
+            </div>
           </section>
-          <section class="panel rules-panel">
+          <section class="panel rules-panel" id="rulesPanel" tabindex="-1">
             <h2>Shift Rules</h2>
             <ul id="rulesList"></ul>
           </section>
         </div>
 
-        <section class="panel actions-panel">
+        <section class="panel actions-panel" id="actionsPanel" tabindex="-1">
           <div class="panel-heading">
             <h2>Investigation</h2>
             <span id="actionHint">Pick an incident from the queue.</span>
@@ -116,17 +128,17 @@
           <div class="action-grid" id="investigationActions"></div>
         </section>
 
-        <section class="panel decision-panel">
+        <section class="panel decision-panel" id="decisionPanel" tabindex="-1">
           <div>
             <h2>Troubleshoot And Close</h2>
             <p>Choose the technical step, then resolve, escalate, dispatch, deny, or postpone.</p>
           </div>
-          <div class="decision-group">
+          <div class="decision-group" id="troubleshootSection" tabindex="-1">
             <span class="group-label">Troubleshooting</span>
             <p class="control-helper" id="troubleshootHelper">Classify the ticket before choosing troubleshooting.</p>
             <div class="troubleshoot-control" id="troubleshootControl" role="group" aria-label="Troubleshooting step"></div>
           </div>
-          <div class="decision-group">
+          <div class="decision-group" id="resolutionSection" tabindex="-1">
             <span class="group-label">Final Action</span>
             <p class="control-helper" id="resolutionHelper">Choose a troubleshooting step before closing the ticket.</p>
             <div class="resolution-grid" id="resolutionGrid"></div>

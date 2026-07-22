@@ -20,4 +20,6 @@ Gameplay readability features include queue signal tags, active-ticket risk lens
 
 Consequence features include close-review audits, quality and severity ratings, severity-weighted metric fallout, specific follow-up tickets linked to original decisions, and a shift summary that reports clean closes, risky closes, policy violations, major consequences, and best/worst triage calls.
 
+Polish and responsive UX features include a sticky next-action bar, jump-to-section guidance, active-stage panel highlights, classification controls before the risk lens, container-query workbench layouts, earlier sidebar collapse, and reduced nested scrolling on narrower screens.
+
 Open `index.html` in a browser to play the current prototype.

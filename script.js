@@ -428,7 +428,18 @@ const els = {
   stageMissing: document.querySelector("#stageMissing"),
   evidenceProgress: document.querySelector("#evidenceProgress"),
   requirementStatus: document.querySelector("#requirementStatus"),
+  nextActionTitle: document.querySelector("#nextActionTitle"),
+  nextActionHint: document.querySelector("#nextActionHint"),
+  nextActionButton: document.querySelector("#nextActionButton"),
   channelStatus: document.querySelector("#channelStatus"),
+  reportPanel: document.querySelector("#reportPanel"),
+  evidencePanel: document.querySelector("#evidencePanel"),
+  classificationPanel: document.querySelector("#classificationPanel"),
+  rulesPanel: document.querySelector("#rulesPanel"),
+  actionsPanel: document.querySelector("#actionsPanel"),
+  decisionPanel: document.querySelector("#decisionPanel"),
+  troubleshootSection: document.querySelector("#troubleshootSection"),
+  resolutionSection: document.querySelector("#resolutionSection"),
   caseFacts: document.querySelector("#caseFacts"),
   evidenceLog: document.querySelector("#evidenceLog"),
   riskLens: document.querySelector("#riskLens"),
@@ -656,6 +667,91 @@ function currentStage(item) {
     hint: "Resolve, escalate, dispatch, deny, or postpone based on the evidence and selected fix.",
     missing: ["Final action"]
   };
+}
+
+function missingClassificationTarget(item) {
+  if (!item || !item.diagnosis) return "diagnosis";
+  if (!item.category) return "category";
+  if (!item.priority) return "priority";
+  return "classification";
+}
+
+function nextActionFor(item) {
+  const stage = currentStage(item);
+  if (stage.id === "start") {
+    return {
+      title: "Start Shift",
+      hint: "Open the live queue and take the first incident.",
+      label: "Start Shift",
+      target: "queue"
+    };
+  }
+
+  if (stage.id === "investigate") {
+    return {
+      title: "Gather Evidence",
+      hint: "Start with identity verification or diagnostics before classifying.",
+      label: "Jump To Investigation",
+      target: "actions"
+    };
+  }
+
+  if (stage.id === "classify") {
+    const missing = missingClassificationTarget(item);
+    const labels = { diagnosis: "Diagnosis", category: "Category", priority: "Priority", classification: "Classification" };
+    return {
+      title: `Set ${labels[missing]}`,
+      hint: `${stage.missing.join(", ")} still missing before troubleshooting unlocks.`,
+      label: `Jump To ${labels[missing]}`,
+      target: "classification"
+    };
+  }
+
+  if (stage.id === "troubleshoot") {
+    return {
+      title: "Choose Troubleshooting",
+      hint: "Pick the concrete step that addresses the likely cause.",
+      label: "Jump To Troubleshooting",
+      target: "troubleshoot"
+    };
+  }
+
+  if (stage.id === "close") {
+    return {
+      title: "Close Or Escalate",
+      hint: "Choose the final action you are willing to defend in review.",
+      label: "Jump To Final Action",
+      target: "resolution"
+    };
+  }
+
+  return {
+    title: "Watch For Follow-Up",
+    hint: "This ticket is closed. Monitor the feed and live queue.",
+    label: "Jump To Feed",
+    target: "feed"
+  };
+}
+
+function jumpToTarget(target) {
+  const targetMap = {
+    queue: els.queueList,
+    actions: els.actionsPanel,
+    classification: els.classificationPanel,
+    troubleshoot: els.troubleshootSection,
+    resolution: els.resolutionSection,
+    feed: els.feed
+  };
+  const node = targetMap[target] || els.classificationPanel;
+  if (target === "queue" && !availableCases().length && futureCases().length) {
+    const nextArrival = Math.min(...futureCases().map((item) => item.arrival));
+    advance(Math.max(1, nextArrival - state.time));
+    return;
+  }
+  node.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (typeof node.focus === "function") {
+    node.focus({ preventScroll: true });
+  }
 }
 
 function reveal(caseItem, actionId) {
@@ -1159,6 +1255,8 @@ function render() {
   renderRules();
   renderCase(current);
   renderStageBar(current);
+  renderNextAction(current);
+  renderStageHighlights(current);
   renderWorkflow(current);
   renderActions(current);
   renderDecision(current);
@@ -1180,6 +1278,41 @@ function renderStageBar(item) {
   els.requirementStatus.innerHTML = requirementItems(item).map((requirement) => `
     <span class="${requirement.done ? "done" : ""}">${requirement.done ? "OK" : "--"} ${requirement.label}</span>
   `).join("");
+}
+
+function renderNextAction(item) {
+  const next = nextActionFor(item);
+  els.nextActionTitle.textContent = next.title;
+  els.nextActionHint.textContent = next.hint;
+  els.nextActionButton.textContent = next.label;
+  els.nextActionButton.dataset.target = next.target;
+}
+
+function renderStageHighlights(item) {
+  const stage = currentStage(item);
+  const allTargets = [
+    els.reportPanel,
+    els.evidencePanel,
+    els.classificationPanel,
+    els.actionsPanel,
+    els.decisionPanel,
+    els.troubleshootSection,
+    els.resolutionSection
+  ];
+  allTargets.forEach((node) => node.classList.remove("stage-focus", "substage-focus"));
+
+  if (stage.id === "investigate") {
+    els.actionsPanel.classList.add("stage-focus");
+    els.evidencePanel.classList.add("substage-focus");
+  } else if (stage.id === "classify") {
+    els.classificationPanel.classList.add("stage-focus");
+  } else if (stage.id === "troubleshoot") {
+    els.decisionPanel.classList.add("stage-focus");
+    els.troubleshootSection.classList.add("substage-focus");
+  } else if (stage.id === "close") {
+    els.decisionPanel.classList.add("stage-focus");
+    els.resolutionSection.classList.add("substage-focus");
+  }
 }
 
 function renderChannelStatus(open) {
@@ -1476,6 +1609,7 @@ els.advanceTime.addEventListener("click", () => {
 els.endShift.addEventListener("click", endShift);
 els.restartGame.addEventListener("click", restartGame);
 els.ackCloseReview.addEventListener("click", hideCloseReview);
+els.nextActionButton.addEventListener("click", () => jumpToTarget(els.nextActionButton.dataset.target));
 
 unlockArrivals();
 render();
