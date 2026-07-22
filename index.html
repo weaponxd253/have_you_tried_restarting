@@ -97,15 +97,15 @@
           </section>
           <section class="panel classification-panel" id="classificationPanel" tabindex="-1">
             <h2>Classification</h2>
-            <div class="decision-group">
+            <div class="decision-group" id="diagnosisSection" tabindex="-1">
               <span class="group-label">Diagnosis</span>
               <div class="diagnosis-control" id="diagnosisControl" role="group" aria-label="Diagnosis"></div>
             </div>
-            <div class="decision-group">
+            <div class="decision-group" id="categorySection" tabindex="-1">
               <span class="group-label">Category</span>
               <div class="category-control" id="categoryControl" role="group" aria-label="Category"></div>
             </div>
-            <div class="decision-group">
+            <div class="decision-group" id="prioritySection" tabindex="-1">
               <span class="group-label">Priority</span>
               <div class="priority-control" id="priorityControl" role="group" aria-label="Priority"></div>
             </div>
@@ -116,6 +116,7 @@
           </section>
           <section class="panel rules-panel" id="rulesPanel" tabindex="-1">
             <h2>Shift Rules</h2>
+            <p id="ruleRiskNote" class="rule-risk-note">Select a ticket to see relevant rules.</p>
             <ul id="rulesList"></ul>
           </section>
         </div>

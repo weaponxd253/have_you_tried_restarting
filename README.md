@@ -22,4 +22,6 @@ Consequence features include close-review audits, quality and severity ratings, 
 
 Polish and responsive UX features include a sticky next-action bar, jump-to-section guidance, active-stage panel highlights, classification controls before the risk lens, container-query workbench layouts, earlier sidebar collapse, and reduced nested scrolling on narrower screens.
 
+Guidance and policy features include exact next-control jumps for diagnosis, category, priority, troubleshooting, and closing, plus contextual rule highlighting that calls out the policy most relevant to the selected incident and cites broken rules in close reviews.
+
 Open `index.html` in a browser to play the current prototype.

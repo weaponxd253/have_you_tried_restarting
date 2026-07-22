@@ -71,6 +71,7 @@ const cases = [
     department: "Executive Office",
     location: "External phone number",
     signals: ["External caller", "VIP pressure", "Security risk"],
+    ruleTags: ["mfa", "identity", "security", "social_engineering"],
     risk: { security: "High", impact: "Executive access", verification: "Failed", sla: "Rising" },
     report: "Caller says the CEO is locked out before an acquisition call and demands an MFA bypass right now.",
     facts: {
@@ -108,6 +109,7 @@ const cases = [
     department: "Shipping",
     location: "Warehouse B",
     signals: ["Multi-user impact", "Operations blocked", "Dispatch candidate"],
+    ruleTags: ["p1", "outage", "apps"],
     risk: { security: "Low", impact: "Warehouse outage", verification: "Trusted source", sla: "Critical" },
     report: "Ten handheld scanners froze after the morning update. Trucks are waiting at the dock.",
     facts: {
@@ -145,6 +147,7 @@ const cases = [
     department: "Infrastructure",
     location: "Remote workforce",
     signals: ["Monitoring alert", "Multi-region", "Call flood risk"],
+    ruleTags: ["p1", "outage", "correlation", "network"],
     risk: { security: "Medium", impact: "Remote workforce", verification: "Trusted monitor", sla: "Critical" },
     report: "VPN authentication failures jumped across three regions. Individual users are starting to call in.",
     facts: {
@@ -182,6 +185,7 @@ const cases = [
     department: "Finance contractor",
     location: "12th floor help counter",
     signals: ["Walk-up", "Restricted data", "Unmanaged device"],
+    ruleTags: ["finance", "restricted_data", "identity", "security"],
     risk: { security: "High", impact: "Payroll data", verification: "Unverified", sla: "Low" },
     report: "Contractor says their manager is in a board meeting and asked them to pull a payroll export from a restricted share.",
     facts: {
@@ -219,6 +223,7 @@ const cases = [
     department: "Sales",
     location: "Boardroom 4A",
     signals: ["Revenue impact", "Time pressure", "Dispatch candidate"],
+    ruleTags: ["hardware", "revenue"],
     risk: { security: "Low", impact: "Customer demo", verification: "Likely valid", sla: "Rising" },
     report: "A customer demo starts in 25 minutes. The room display shows no signal from any laptop.",
     facts: {
@@ -256,6 +261,7 @@ const cases = [
     department: "Accounts Payable",
     location: "HQ 8W",
     signals: ["Security risk", "Payment access", "Endpoint alert"],
+    ruleTags: ["p1", "security", "restricted_data", "endpoint"],
     risk: { security: "High", impact: "Payment workflow", verification: "Verified caller", sla: "Critical" },
     report: "User opened an invoice attachment from a new vendor. Browser popups and a fake antivirus page appeared.",
     facts: {
@@ -293,6 +299,7 @@ const cases = [
     department: "Customer Care",
     location: "Remote",
     signals: ["Security risk", "Business critical", "External forwarding"],
+    ruleTags: ["p1", "security", "restricted_data", "mailbox"],
     risk: { security: "High", impact: "Customer refunds", verification: "Portal request", sla: "Critical" },
     report: "Messages disappear from the shared support mailbox minutes after arrival.",
     facts: {
@@ -330,6 +337,7 @@ const cases = [
     department: "People Ops",
     location: "HQ lobby",
     signals: ["Onboarding", "Asset custody", "Time pressure"],
+    ruleTags: ["asset", "identity"],
     risk: { security: "Medium", impact: "New hire start", verification: "Trusted source", sla: "Rising" },
     report: "A new engineer starts in one hour. The assigned laptop is still in imaging and People Ops wants any spare handed over.",
     facts: {
@@ -361,11 +369,46 @@ const cases = [
 ];
 
 const rules = [
-  { minute: START_MINUTE, text: "No MFA bypass or password reset without callback verification." },
-  { minute: START_MINUTE, text: "P1 means security exposure, production outage, or multi-user revenue/operations impact." },
-  { minute: START_MINUTE, text: "Payroll and finance data access requires an approver-group ticket. Walk-up approval is invalid." },
-  { minute: 9 * 60 + 15, text: "Security bulletin: executive office and finance are under targeted social-engineering attempts." },
-  { minute: 9 * 60 + 35, text: "Correlate same-symptom reports before resetting individual accounts." }
+  {
+    id: "mfa-callback",
+    minute: START_MINUTE,
+    label: "Identity",
+    tags: ["mfa", "identity", "security"],
+    summary: "Callback verification required before MFA or password changes.",
+    text: "No MFA bypass or password reset without callback verification."
+  },
+  {
+    id: "p1-impact",
+    minute: START_MINUTE,
+    label: "Priority",
+    tags: ["p1", "outage", "security"],
+    summary: "P1 may apply when many users, operations, revenue, or security exposure are affected.",
+    text: "P1 means security exposure, production outage, or multi-user revenue/operations impact."
+  },
+  {
+    id: "finance-restricted",
+    minute: START_MINUTE,
+    label: "Restricted Data",
+    tags: ["finance", "restricted_data"],
+    summary: "Finance data access needs an approver-group ticket.",
+    text: "Payroll and finance data access requires an approver-group ticket. Walk-up approval is invalid."
+  },
+  {
+    id: "social-engineering",
+    minute: 9 * 60 + 15,
+    label: "Bulletin",
+    tags: ["social_engineering", "security", "finance"],
+    summary: "Executive office and finance are under targeted social-engineering attempts.",
+    text: "Security bulletin: executive office and finance are under targeted social-engineering attempts."
+  },
+  {
+    id: "correlation",
+    minute: 9 * 60 + 35,
+    label: "Correlation",
+    tags: ["correlation", "outage"],
+    summary: "Correlate same-symptom reports before treating them as isolated user issues.",
+    text: "Correlate same-symptom reports before resetting individual accounts."
+  }
 ];
 
 const initialState = {
@@ -436,6 +479,9 @@ const els = {
   evidencePanel: document.querySelector("#evidencePanel"),
   classificationPanel: document.querySelector("#classificationPanel"),
   rulesPanel: document.querySelector("#rulesPanel"),
+  diagnosisSection: document.querySelector("#diagnosisSection"),
+  categorySection: document.querySelector("#categorySection"),
+  prioritySection: document.querySelector("#prioritySection"),
   actionsPanel: document.querySelector("#actionsPanel"),
   decisionPanel: document.querySelector("#decisionPanel"),
   troubleshootSection: document.querySelector("#troubleshootSection"),
@@ -443,6 +489,7 @@ const els = {
   caseFacts: document.querySelector("#caseFacts"),
   evidenceLog: document.querySelector("#evidenceLog"),
   riskLens: document.querySelector("#riskLens"),
+  ruleRiskNote: document.querySelector("#ruleRiskNote"),
   rulesList: document.querySelector("#rulesList"),
   workflowSteps: document.querySelector("#workflowSteps"),
   workflowHint: document.querySelector("#workflowHint"),
@@ -520,6 +567,38 @@ function signalTags(item) {
 
 function activeRules() {
   return rules.filter((rule) => rule.minute <= state.time);
+}
+
+function relevantRulesFor(item) {
+  if (!item) return [];
+  const itemTags = new Set(item.ruleTags || []);
+  return activeRules().filter((rule) => rule.tags.some((tag) => itemTags.has(tag)));
+}
+
+function strongestRuleFor(item) {
+  return relevantRulesFor(item)[0] || null;
+}
+
+function violatedRulesFor(caseItem) {
+  if (!caseItem) return [];
+  const itemTags = new Set(caseItem.ruleTags || []);
+  const unsafeAccessAction = ["reset_access", "remote_fix", "dispatch"].includes(caseItem.resolution);
+
+  return relevantRulesFor(caseItem).filter((rule) => {
+    if (rule.id === "mfa-callback") {
+      return itemTags.has("mfa") && !caseItem.revealed.includes("verify") && unsafeAccessAction;
+    }
+    if (rule.id === "p1-impact") {
+      return caseItem.correctPriority === "P1" && caseItem.priority !== "P1";
+    }
+    if (rule.id === "finance-restricted") {
+      return itemTags.has("finance") && !["deny", "security"].includes(caseItem.resolution);
+    }
+    if (rule.id === "correlation") {
+      return itemTags.has("correlation") && !["apps", "network", "monitor"].includes(caseItem.resolution);
+    }
+    return false;
+  });
 }
 
 function availableCases() {
@@ -615,7 +694,7 @@ function currentStage(item) {
     return {
       id: "start",
       title: "Start Shift",
-      hint: "Start the shift to receive calls, tickets, chats, alerts, and walk-ups.",
+      hint: "Queue idle.",
       missing: ["Start shift"]
     };
   }
@@ -623,8 +702,8 @@ function currentStage(item) {
   if (item.status === "resolved") {
     return {
       id: "follow",
-      title: "Waiting For Consequences",
-      hint: "This ticket is closed. Watch the supervisor feed and queue for follow-up work.",
+      title: "Follow Up",
+      hint: "Ticket closed.",
       missing: []
     };
   }
@@ -632,8 +711,8 @@ function currentStage(item) {
   if (item.revealed.length === 1) {
     return {
       id: "investigate",
-      title: "Gather Evidence",
-      hint: "Review the report, then verify identity, ask a question, run diagnostics, or check records.",
+      title: "Investigate",
+      hint: "Evidence gathering in progress.",
       missing: ["Evidence"]
     };
   }
@@ -646,8 +725,8 @@ function currentStage(item) {
   if (missing.length) {
     return {
       id: "classify",
-      title: "Assign Category And Priority",
-      hint: "Commit to what is wrong, which queue owns it, and how urgent it is.",
+      title: "Classify",
+      hint: "Classification requirements pending.",
       missing
     };
   }
@@ -655,16 +734,16 @@ function currentStage(item) {
   if (!item.troubleshooting.length) {
     return {
       id: "troubleshoot",
-      title: "Choose Troubleshooting Step",
-      hint: "Pick the concrete action you would defend in the ticket notes. Each step spends time.",
+      title: "Troubleshoot",
+      hint: "Classification complete.",
       missing: ["Troubleshooting"]
     };
   }
 
   return {
     id: "close",
-    title: "Choose Final Action",
-    hint: "Resolve, escalate, dispatch, deny, or postpone based on the evidence and selected fix.",
+    title: "Close",
+    hint: "Ready for final action.",
     missing: ["Final action"]
   };
 }
@@ -690,7 +769,7 @@ function nextActionFor(item) {
   if (stage.id === "investigate") {
     return {
       title: "Gather Evidence",
-      hint: "Start with identity verification or diagnostics before classifying.",
+      hint: "Use the investigation tools to collect enough proof before classifying.",
       label: "Jump To Investigation",
       target: "actions"
     };
@@ -703,7 +782,7 @@ function nextActionFor(item) {
       title: `Set ${labels[missing]}`,
       hint: `${stage.missing.join(", ")} still missing before troubleshooting unlocks.`,
       label: `Jump To ${labels[missing]}`,
-      target: "classification"
+      target: missing
     };
   }
 
@@ -738,6 +817,9 @@ function jumpToTarget(target) {
     queue: els.queueList,
     actions: els.actionsPanel,
     classification: els.classificationPanel,
+    diagnosis: els.diagnosisSection,
+    category: els.categorySection,
+    priority: els.prioritySection,
     troubleshoot: els.troubleshootSection,
     resolution: els.resolutionSection,
     feed: els.feed
@@ -876,6 +958,7 @@ function evaluateCase(caseItem) {
   const priorityCorrect = caseItem.correctPriority === caseItem.priority;
   const verified = caseItem.revealed.includes("verify");
   const investigated = caseItem.revealed.includes("diagnostics") || caseItem.revealed.includes("records") || caseItem.revealed.includes("question");
+  const violatedRules = violatedRulesFor(caseItem);
   let score = 0;
 
   if (diagnosisCorrect) score += 15;
@@ -894,14 +977,16 @@ function evaluateCase(caseItem) {
     score -= 10;
   }
 
-  const policyViolation = (
+  const unsafeAccessViolation = (
     caseItem.securityRisk &&
     !verified &&
     ["reset_access", "remote_fix", "dispatch"].includes(caseItem.resolution)
-  ) || (
+  );
+  const restrictedDataViolation = (
     caseItem.correctResolution === "deny" &&
     !["deny", "security"].includes(caseItem.resolution)
   );
+  const policyViolation = violatedRules.length > 0 || unsafeAccessViolation || restrictedDataViolation;
 
   const reasons = [];
   if (diagnosisCorrect) reasons.push("Diagnosis matched the evidence.");
@@ -914,7 +999,11 @@ function evaluateCase(caseItem) {
   else reasons.push("Troubleshooting step did not address the likely cause.");
   if (verified) reasons.push("Identity/risk verification was documented.");
   else if (caseItem.securityRisk) reasons.push("Security-sensitive request closed without identity verification.");
-  if (policyViolation) reasons.push("Policy violation: unsafe access or data handling decision.");
+  if (violatedRules.length) {
+    violatedRules.forEach((rule) => reasons.push(`Rule violated: ${rule.summary}`));
+  } else if (policyViolation) {
+    reasons.push("Policy violation: unsafe access or data handling decision.");
+  }
 
   const finalScore = Math.max(0, score);
   let quality = "Incomplete";
@@ -946,7 +1035,8 @@ function evaluateCase(caseItem) {
       priorityCorrect,
       verified,
       investigated,
-      policyViolation
+      policyViolation,
+      violatedRules: violatedRules.map((rule) => rule.id)
     }
   };
 }
@@ -1053,6 +1143,7 @@ function makeFollowUpCase(caseItem, good, minute) {
     requester: good ? "Supervisor desk" : (severity === "Major" ? "Incident manager" : "Team manager"),
     department: caseItem.department,
     location: caseItem.location,
+    ruleTags: caseItem.ruleTags || [],
     signals: good
       ? ["Follow-up", "Closure", originTag]
       : ["Follow-up", `${severity} review`, caseItem.securityRisk ? "Security risk" : "SLA risk"],
@@ -1294,18 +1385,27 @@ function renderStageHighlights(item) {
     els.reportPanel,
     els.evidencePanel,
     els.classificationPanel,
+    els.diagnosisSection,
+    els.categorySection,
+    els.prioritySection,
     els.actionsPanel,
     els.decisionPanel,
     els.troubleshootSection,
     els.resolutionSection
   ];
-  allTargets.forEach((node) => node.classList.remove("stage-focus", "substage-focus"));
+  allTargets.forEach((node) => node.classList.remove("stage-focus", "substage-focus", "active-control-focus"));
 
   if (stage.id === "investigate") {
     els.actionsPanel.classList.add("stage-focus");
     els.evidencePanel.classList.add("substage-focus");
   } else if (stage.id === "classify") {
     els.classificationPanel.classList.add("stage-focus");
+    const targetMap = {
+      diagnosis: els.diagnosisSection,
+      category: els.categorySection,
+      priority: els.prioritySection
+    };
+    targetMap[missingClassificationTarget(item)]?.classList.add("active-control-focus");
   } else if (stage.id === "troubleshoot") {
     els.decisionPanel.classList.add("stage-focus");
     els.troubleshootSection.classList.add("substage-focus");
@@ -1439,7 +1539,20 @@ function renderFeed() {
 }
 
 function renderRules() {
-  els.rulesList.innerHTML = activeRules().map((rule) => `<li>${rule.text}</li>`).join("");
+  const item = selectedCase();
+  const relevant = new Set(relevantRulesFor(item).map((rule) => rule.id));
+  const strongestRule = strongestRuleFor(item);
+  els.ruleRiskNote.textContent = !item
+    ? "Select a ticket to see relevant rules."
+    : strongestRule
+      ? `Most relevant: ${strongestRule.summary}`
+      : "No special policy rule highlighted for this ticket.";
+
+  els.rulesList.innerHTML = activeRules().map((rule) => {
+    const relevanceClass = item ? (relevant.has(rule.id) ? "rule-relevant" : "rule-muted") : "";
+    const status = item && relevant.has(rule.id) ? `<span class="rule-tag">Relevant</span>` : "";
+    return `<li class="${relevanceClass}"><span class="rule-label">${rule.label}</span>${status}<p>${rule.text}</p></li>`;
+  }).join("");
 }
 
 function renderAuditPreview(item) {
