@@ -24,4 +24,6 @@ Polish and responsive UX features include a sticky next-action bar, jump-to-sect
 
 Guidance and policy features include exact next-control jumps for diagnosis, category, priority, troubleshooting, and closing, plus contextual rule highlighting that calls out the policy most relevant to the selected incident and cites broken rules in close reviews.
 
+Decision-readiness features include close-readiness chips, final-action risk hints, pre-close warnings for dangerous decisions, and close reviews that repeat the warnings the player saw before committing.
+
 Open `index.html` in a browser to play the current prototype.

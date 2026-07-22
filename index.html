@@ -134,6 +134,13 @@
             <h2>Troubleshoot And Close</h2>
             <p>Choose the technical step, then resolve, escalate, dispatch, deny, or postpone.</p>
           </div>
+          <div class="decision-readiness" id="closeReadiness" aria-live="polite">
+            <div>
+              <span class="group-label">Close Readiness</span>
+              <strong>No ticket selected</strong>
+            </div>
+            <p>Select an incident to see whether it is ready to close.</p>
+          </div>
           <div class="decision-group" id="troubleshootSection" tabindex="-1">
             <span class="group-label">Troubleshooting</span>
             <p class="control-helper" id="troubleshootHelper">Classify the ticket before choosing troubleshooting.</p>
@@ -174,6 +181,23 @@
       </div>
       <div id="closeReviewBody"></div>
       <button id="ackCloseReview" class="primary-button">Acknowledge</button>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="closeWarningModal">
+    <section class="summary-modal close-warning-modal" role="dialog" aria-modal="true" aria-labelledby="closeWarningTitle">
+      <div class="review-heading">
+        <div>
+          <p class="eyebrow">Pre-Close Warning</p>
+          <h2 id="closeWarningTitle">Risky close</h2>
+        </div>
+        <div id="closeWarningBadge" class="review-badge">Risk</div>
+      </div>
+      <div id="closeWarningBody"></div>
+      <div class="modal-actions">
+        <button id="cancelCloseWarning" class="icon-button">Go Back</button>
+        <button id="confirmCloseWarning" class="primary-button danger-button">Close Anyway</button>
+      </div>
     </section>
   </div>
 
