@@ -26,4 +26,8 @@ Guidance and policy features include exact next-control jumps for diagnosis, cat
 
 Decision-readiness features include close-readiness chips, final-action risk hints, pre-close warnings for dangerous decisions, and close reviews that repeat the warnings the player saw before committing.
 
+Shift-memory features include compact case memory, tagged supervisor feed events, clearer follow-up provenance, queue-level pattern hints, consequence reason lines, and a final summary that reports warnings, risky follow-ups, and repeated risk patterns.
+
+Learning and replay features include one-line supervisor debrief lessons, derived skill tracking, end-of-shift strengths and weak spots, deterministic shift seeds, and replay modifiers for security-heavy, outage-heavy, or lean-staffing shifts.
+
 Open `index.html` in a browser to play the current prototype.

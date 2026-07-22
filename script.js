@@ -46,6 +46,81 @@ const resolutionOptions = [
   { id: "monitor", label: "Monitor", cost: 4, resource: null, note: "Park it and watch for correlation." }
 ];
 
+const patternTagLabels = {
+  mfa: "MFA and identity pressure",
+  p1: "P1 impact pressure",
+  outage: "multi-user outage symptoms",
+  security: "security-sensitive requests",
+  restricted_data: "restricted-data access",
+  social_engineering: "social-engineering cues",
+  correlation: "same-symptom reports",
+  finance: "finance data access",
+  endpoint: "endpoint compromise",
+  mailbox: "mailbox compromise",
+  asset: "asset custody"
+};
+
+const shiftModifiers = [
+  {
+    id: "standard",
+    label: "Standard Shift",
+    short: "Baseline",
+    seed: "standard-0800",
+    description: "The current balanced help-desk shift.",
+    feed: []
+  },
+  {
+    id: "security_blitz",
+    label: "Security Blitz",
+    short: "Security pressure",
+    seed: "sec-9017",
+    description: "More security-sensitive work arrives earlier, with one fewer analyst to lean on.",
+    resourceAdjustments: { security: -1 },
+    metricAdjustments: { security: -4, trust: -2 },
+    arrivalOffsetsByTag: { security: -12, mfa: -4, endpoint: -10, mailbox: -14, finance: -8 },
+    feed: [
+      { minute: START_MINUTE, title: "Modifier: Security Blitz", text: "Security-sensitive requests are more likely early today. Verification discipline matters.", tone: "neutral", tags: ["Modifier"] }
+    ]
+  },
+  {
+    id: "outage_morning",
+    label: "Outage Morning",
+    short: "Correlation pressure",
+    seed: "outage-412",
+    description: "P1 and same-symptom incidents cluster sooner, pushing prioritization and correlation.",
+    resourceAdjustments: { apps: -1 },
+    metricAdjustments: { sla: -5 },
+    arrivalOffsetsByTag: { p1: -14, outage: -16, correlation: -20 },
+    feed: [
+      { minute: START_MINUTE, title: "Modifier: Outage Morning", text: "Monitoring is noisy and same-symptom reports may cluster. Watch for patterns before treating tickets one at a time.", tone: "neutral", tags: ["Modifier"] }
+    ]
+  },
+  {
+    id: "lean_staffing",
+    label: "Lean Staffing",
+    short: "Resource pressure",
+    seed: "lean-220",
+    description: "Escalation pools are thinner, so dispatches and specialist handoffs need sharper justification.",
+    resourceAdjustments: { security: -1, field: -1, network: -1, apps: -1 },
+    metricAdjustments: { budget: -6, sla: -2 },
+    arrivalOffsetsByCase: { "warehouse-scanners": -5, "projector-demo": -8, "new-hire-laptop": -15 },
+    feed: [
+      { minute: START_MINUTE, title: "Modifier: Lean Staffing", text: "Specialist pools are short today. Route carefully and avoid spending scarce resources on shaky closes.", tone: "neutral", tags: ["Modifier"] }
+    ]
+  }
+];
+
+const caseLessons = {
+  "exec-mfa": "VIP pressure is a risk signal, not an authorization signal.",
+  "warehouse-scanners": "Multi-user operations impact should drive priority before convenience.",
+  "vpn-wave": "Same-symptom access failures should be correlated before resetting individual accounts.",
+  "payroll-access": "Restricted data access needs an approval trail, even when the requester is standing there.",
+  "projector-demo": "Revenue pressure can justify dispatch, but only after confirming it is a room fault.",
+  "invoice-popups": "Payment-access endpoints with suspected malware need containment before cleanup.",
+  "shared-mailbox": "External forwarding in a business-critical mailbox is a security incident until proven otherwise.",
+  "new-hire-laptop": "Asset custody protects the company even when onboarding is time-sensitive."
+};
+
 const investigationActions = [
   { id: "verify", label: "Verify Identity", symbol: "ID", cost: 4, description: "Check caller, directory, MFA, manager, and policy." },
   { id: "question", label: "Ask Follow-up", symbol: "?", cost: 5, description: "Gather symptom details and pressure cues." },
@@ -430,13 +505,17 @@ const initialState = {
     sla: 72,
     budget: 72
   },
+  activeModifier: "standard",
+  shiftSeed: "standard-0800",
   feed: [
-    { minute: START_MINUTE, title: "Desk ready", text: "Start the shift to receive calls, tickets, chats, monitoring alerts, and walk-ups.", tone: "neutral" }
+    { minute: START_MINUTE, title: "Desk ready", text: "Start the shift to receive calls, tickets, chats, monitoring alerts, and walk-ups.", tone: "neutral", tags: ["Shift"] }
   ],
   scheduled: [],
   reviews: [],
+  seenPatterns: [],
   cases: cases.map((item) => ({
     ...item,
+    baseArrival: item.arrival,
     status: "pending",
     revealed: ["initial"],
     audit: [
@@ -453,7 +532,7 @@ const initialState = {
   }))
 };
 
-let state = cloneState(initialState);
+let state = buildInitialState("standard");
 let pendingResolutionId = null;
 
 const els = {
@@ -461,6 +540,7 @@ const els = {
   queueCount: document.querySelector("#queueCount"),
   openCount: document.querySelector("#openCount"),
   queueList: document.querySelector("#queueList"),
+  patternHint: document.querySelector("#patternHint"),
   resourceList: document.querySelector("#resourceList"),
   metricList: document.querySelector("#metricList"),
   feed: document.querySelector("#feed"),
@@ -524,6 +604,59 @@ const els = {
 
 function cloneState(source) {
   return JSON.parse(JSON.stringify(source));
+}
+
+function modifierById(modifierId) {
+  return shiftModifiers.find((modifier) => modifier.id === modifierId) || shiftModifiers[0];
+}
+
+function modifierArrivalOffset(caseItem, modifier) {
+  const caseOffset = modifier.arrivalOffsetsByCase?.[caseItem.id] || 0;
+  const tagOffset = (caseItem.ruleTags || []).reduce((sum, tag) => sum + (modifier.arrivalOffsetsByTag?.[tag] || 0), 0);
+  return caseOffset + tagOffset;
+}
+
+function applyResourceAdjustment(resource, amount) {
+  resource.max = Math.max(1, resource.max + amount);
+  resource.remaining = Math.max(1, Math.min(resource.max, resource.remaining + amount));
+}
+
+function buildInitialState(modifierId = "standard") {
+  const modifier = modifierById(modifierId);
+  const nextState = cloneState(initialState);
+  nextState.activeModifier = modifier.id;
+  nextState.shiftSeed = modifier.seed;
+
+  Object.entries(modifier.resourceAdjustments || {}).forEach(([key, amount]) => {
+    if (nextState.resources[key]) {
+      applyResourceAdjustment(nextState.resources[key], amount);
+    }
+  });
+
+  Object.entries(modifier.metricAdjustments || {}).forEach(([key, amount]) => {
+    if (nextState.metrics[key] !== undefined) {
+      nextState.metrics[key] = clampMetric(nextState.metrics[key] + amount);
+    }
+  });
+
+  nextState.cases.forEach((caseItem) => {
+    const shiftedArrival = caseItem.baseArrival + modifierArrivalOffset(caseItem, modifier);
+    caseItem.arrival = Math.max(START_MINUTE + 1, shiftedArrival);
+    if (caseItem.audit?.[0]?.title === "Ticket opened") {
+      caseItem.audit[0].minute = caseItem.arrival;
+    }
+  });
+
+  nextState.feed = [
+    ...cloneState(modifier.feed || []),
+    ...nextState.feed.map((item) => ({
+      ...item,
+      text: modifier.id === "standard" ? item.text : `${item.text} Active modifier: ${modifier.label}.`,
+      tags: [...(item.tags || []), modifier.short]
+    }))
+  ];
+
+  return nextState;
 }
 
 function formatTime(minute) {
@@ -756,11 +889,11 @@ function finalActionHintFor(item, option, disabled) {
 }
 
 function availableCases() {
-  return state.cases.filter((item) => item.arrival <= state.time);
+  return state.cases.filter((item) => item.arrival <= state.time).sort((a, b) => a.arrival - b.arrival);
 }
 
 function futureCases() {
-  return state.cases.filter((item) => item.arrival > state.time);
+  return state.cases.filter((item) => item.arrival > state.time).sort((a, b) => a.arrival - b.arrival);
 }
 
 function openCases() {
@@ -771,8 +904,9 @@ function selectedCase() {
   return state.cases.find((item) => item.id === state.selectedId) || null;
 }
 
-function addFeed(title, text, tone = "neutral", minute = state.time, severity = null) {
-  state.feed.unshift({ title, text, tone, minute, severity });
+function addFeed(title, text, tone = "neutral", minute = state.time, severity = null, tags = []) {
+  const feedTags = Array.isArray(tags) ? tags : [tags];
+  state.feed.unshift({ title, text, tone, minute, severity, tags: feedTags.filter(Boolean) });
 }
 
 function clampMetric(value) {
@@ -786,6 +920,181 @@ function changeMetric(name, amount) {
 function addAudit(caseItem, title, text, minute = state.time) {
   if (!caseItem) return;
   caseItem.audit.unshift({ minute, title, text });
+}
+
+function warningSummaryFor(caseItem) {
+  const warnings = caseItem.closeReadiness
+    ? [...caseItem.closeReadiness.confirmationWarnings, ...caseItem.closeReadiness.warnings].map((warning) => warning.text)
+    : [];
+  const uniqueWarnings = [...new Set(warnings)];
+  return uniqueWarnings.find((warning) => warning.startsWith("Would violate:"))
+    || uniqueWarnings.find((warning) => warning.includes("Security-sensitive"))
+    || uniqueWarnings[0]
+    || caseItem.evaluation?.reasons.find((reason) => reason.startsWith("Rule violated:"))
+    || "No pre-close warning recorded.";
+}
+
+function consequenceReasonFor(caseItem, cleanClose) {
+  if (cleanClose && caseItem.securityRisk) {
+    return "Identity checks and security routing limited account exposure.";
+  }
+  if (cleanClose && caseItem.correctPriority === "P1") {
+    return "Fast P1 routing reduced duplicate reports and protected SLA.";
+  }
+  if (cleanClose) {
+    return "Clear ownership and notes kept the handoff small.";
+  }
+  if (caseItem.evaluation?.checks.policyViolation) {
+    return "Skipping policy controls turns help-desk shortcuts into security incidents.";
+  }
+  if (caseItem.correctPriority === "P1" && caseItem.priority !== "P1") {
+    return "Under-prioritized incidents create delayed operational fallout.";
+  }
+  if (!caseItem.evaluation?.checks.investigated) {
+    return "Thin investigation makes the next team rediscover the problem.";
+  }
+  return "A mismatched route or fix leaves unresolved work for another team.";
+}
+
+function lessonForCase(caseItem) {
+  const baseId = caseItem.origin?.id || caseItem.id;
+  if (caseItem.evaluation?.checks.policyViolation) {
+    return "Policy friction is part of the job: it keeps fast help from becoming a bigger incident.";
+  }
+  if (!caseItem.evaluation?.checks.priorityCorrect) {
+    return "Priority is a business-impact call, not just a measure of who sounds most urgent.";
+  }
+  if (!caseItem.evaluation?.checks.investigated) {
+    return "One report is a clue, not a case; investigation gives the close something to stand on.";
+  }
+  return caseLessons[baseId] || "Good triage leaves the next person with evidence, ownership, and a defensible decision.";
+}
+
+function pct(count, total) {
+  return total ? Math.round((count / total) * 100) : 0;
+}
+
+function skillBreakdownForReviews(reviews) {
+  const total = reviews.length;
+  const securityReviews = reviews.filter((review) => review.securityRisk);
+  const resourceReviews = reviews.filter((review) => review.resourceUsed);
+
+  return [
+    {
+      id: "verification",
+      label: "Verification discipline",
+      score: securityReviews.length ? pct(securityReviews.filter((review) => review.checks.verified).length, securityReviews.length) : pct(reviews.filter((review) => review.checks.verified).length, total),
+      strength: "Verified sensitive work before making changes.",
+      weakness: "Security-sensitive work was closed without enough identity proof."
+    },
+    {
+      id: "priority",
+      label: "Prioritization accuracy",
+      score: pct(reviews.filter((review) => review.checks.priorityCorrect).length, total),
+      strength: "Matched urgency to business impact.",
+      weakness: "Impact and SLA signals were under- or over-prioritized."
+    },
+    {
+      id: "policy",
+      label: "Policy compliance",
+      score: pct(reviews.filter((review) => !review.checks.policyViolation).length, total),
+      strength: "Kept policy controls intact under pressure.",
+      weakness: "Policy warnings turned into close-review findings."
+    },
+    {
+      id: "routing",
+      label: "Routing accuracy",
+      score: pct(reviews.filter((review) => review.checks.categoryCorrect && review.checks.resolutionCorrect).length, total),
+      strength: "Sent work to the team that could actually own it.",
+      weakness: "Some final actions did not match the chosen owner or evidence."
+    },
+    {
+      id: "evidence",
+      label: "Evidence depth",
+      score: pct(reviews.filter((review) => review.checks.investigated).length, total),
+      strength: "Built a useful record before closing.",
+      weakness: "Some closes relied too heavily on the initial report."
+    },
+    {
+      id: "resources",
+      label: "Resource restraint",
+      score: resourceReviews.length ? pct(resourceReviews.filter((review) => review.checks.resolutionCorrect || review.quality === "Clean").length, resourceReviews.length) : 100,
+      strength: "Scarce specialist resources were spent with purpose.",
+      weakness: "Limited escalation or dispatch capacity was spent on shaky decisions."
+    }
+  ];
+}
+
+function skillNarrative(skills) {
+  if (!skills.length) {
+    return {
+      strength: "No completed tickets to evaluate yet.",
+      weakness: "Close a few incidents to build a skill profile."
+    };
+  }
+
+  const sorted = [...skills].sort((a, b) => b.score - a.score);
+  const top = sorted[0];
+  const bottom = sorted[sorted.length - 1];
+  return {
+    strength: `${top.label}: ${top.strength}`,
+    weakness: `${bottom.label}: ${bottom.weakness}`
+  };
+}
+
+function patternCandidates(items = openCases()) {
+  const counts = {};
+  items
+    .filter((item) => item.status !== "resolved")
+    .forEach((item) => {
+      [...new Set(item.ruleTags || [])].forEach((tag) => {
+        if (patternTagLabels[tag]) {
+          counts[tag] = (counts[tag] || 0) + 1;
+        }
+      });
+    });
+
+  return Object.entries(counts)
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .map(([tag, count]) => ({
+      tag,
+      count,
+      label: patternTagLabels[tag],
+      id: `${tag}-${count}`
+    }));
+}
+
+function strongestPattern(items = openCases()) {
+  return patternCandidates(items)[0] || null;
+}
+
+function repeatedPatternFor(items) {
+  const counts = {};
+  items.forEach((item) => {
+    [...new Set(item.ruleTags || [])].forEach((tag) => {
+      if (patternTagLabels[tag]) {
+        counts[tag] = (counts[tag] || 0) + 1;
+      }
+    });
+  });
+
+  const [tag, count] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0] || [];
+  return tag ? { tag, count, label: patternTagLabels[tag] } : null;
+}
+
+function recordPatternHint() {
+  const pattern = strongestPattern();
+  if (!pattern || state.seenPatterns.includes(pattern.id)) return;
+  state.seenPatterns.push(pattern.id);
+  addFeed(
+    "Possible pattern",
+    `${pattern.count} open incidents mention ${pattern.label}. Correlate before treating them as isolated tickets.`,
+    "neutral",
+    state.time,
+    null,
+    ["Pattern"]
+  );
 }
 
 function chosenTroubleshootingLabels(caseItem) {
@@ -806,16 +1115,21 @@ function advance(minutes) {
 }
 
 function unlockArrivals() {
+  let newArrival = false;
   state.cases.forEach((item) => {
     if (item.arrival <= state.time && item.status === "pending") {
       item.status = "new";
-      addFeed("New " + item.channel.toLowerCase(), item.title, "neutral", item.arrival);
+      newArrival = true;
+      addFeed("New " + item.channel.toLowerCase(), item.title, "neutral", item.arrival, null, ["New"]);
       if (!state.selectedId) {
         state.selectedId = item.id;
         syncSelectionFromCase(item);
       }
     }
   });
+  if (newArrival) {
+    recordPatternHint();
+  }
 }
 
 function processScheduled() {
@@ -831,7 +1145,7 @@ function processScheduled() {
         syncSelectionFromCase(item.followUp);
       }
     }
-    addFeed(item.title, item.text, item.tone, item.minute, item.severity || null);
+    addFeed(item.title, item.text, item.tone, item.minute, item.severity || null, item.tags || []);
     Object.entries(item.metricChanges || {}).forEach(([metric, amount]) => changeMetric(metric, amount));
   });
 }
@@ -1231,6 +1545,8 @@ function makeCloseReview(caseItem, option) {
     quality: caseItem.quality,
     severity: caseItem.severity,
     finalAction: option.label,
+    securityRisk: caseItem.securityRisk,
+    resourceUsed: option.resource,
     verification: caseItem.revealed.includes("verify") ? "Documented" : "Not documented",
     diagnosis: caseItem.diagnosis ? labelFor(diagnosisOptions, caseItem.diagnosis) : "Missing",
     category: caseItem.category ? labelFor(categoryOptions, caseItem.category) : "Missing",
@@ -1240,7 +1556,9 @@ function makeCloseReview(caseItem, option) {
     readinessWarnings: readiness.confirmationWarnings.length
       ? readiness.confirmationWarnings.map((warning) => warning.text)
       : readiness.warnings.map((warning) => warning.text),
+    lesson: lessonForCase(caseItem),
     reasons: caseItem.evaluation.reasons,
+    checks: { ...caseItem.evaluation.checks },
     audit: caseItem.audit.slice(0, 6),
     followUpGenerated: !caseItem.isFollowUp
   };
@@ -1268,6 +1586,10 @@ function showCloseReview(review) {
     <ul class="review-list">
       ${review.reasons.map((reason) => `<li>${reason}</li>`).join("")}
     </ul>
+    <div class="debrief-line">
+      <span>Lesson</span>
+      <p>${review.lesson}</p>
+    </div>
     ${review.readinessWarnings.length ? `
       <h3>Warnings Seen Before Close</h3>
       <ul class="review-list">
@@ -1359,6 +1681,9 @@ function makeFollowUpCase(caseItem, good, minute) {
   const originDecision = `${chosenResolutionLabel(caseItem)} after ${chosenTroubleshootingLabels(caseItem)}`;
   const followTitle = followUpTitle(caseItem, good);
   const originTag = `From: ${caseItem.title.split(":")[0].slice(0, 18)}`;
+  const missedWarning = warningSummaryFor(caseItem);
+  const consequenceSummary = good ? caseItem.consequence.good : caseItem.consequence.bad;
+  const consequenceReason = consequenceReasonFor(caseItem, good);
   return {
     id: `follow-${caseItem.id}-${minute}-${good ? "closure" : "review"}`,
     arrival: minute,
@@ -1382,7 +1707,10 @@ function makeFollowUpCase(caseItem, good, minute) {
       : "The earlier decision created fallout. Re-check the record, contain remaining risk, and route the corrective action.",
     facts: {
       Original: caseItem.title,
-      "Original decision": originDecision,
+      "Original close": originDecision,
+      "Missed warning": missedWarning,
+      Consequence: consequenceSummary,
+      "Why it mattered": consequenceReason,
       "Close quality": `${caseItem.quality} / ${severity}`,
       "Original score": String(caseItem.score),
       Category: labelFor(categoryOptions, caseItem.correctCategory),
@@ -1392,8 +1720,8 @@ function makeFollowUpCase(caseItem, good, minute) {
       {
         source: good ? "Closure note" : `${severity} escalation`,
         text: good
-          ? `${caseItem.consequence.good} Confirm notes and user impact before archiving.`
-          : `${caseItem.consequence.bad} Original close was ${caseItem.quality}: ${caseItem.evaluation.reasons.slice(-2).join(" ")}`,
+          ? `${consequenceSummary} Why it mattered: ${consequenceReason} Confirm notes and user impact before archiving.`
+          : `${consequenceSummary} Why it mattered: ${consequenceReason} Original close was ${caseItem.quality}: ${caseItem.evaluation.reasons.slice(-2).join(" ")}`,
         tone: good ? "good" : "risk"
       }
     ],
@@ -1415,6 +1743,8 @@ function makeFollowUpCase(caseItem, good, minute) {
       id: caseItem.id,
       title: caseItem.title,
       decision: originDecision,
+      missedWarning,
+      consequence: consequenceSummary,
       quality: caseItem.quality,
       severity
     },
@@ -1461,7 +1791,19 @@ function metricChangesForEvaluation(caseItem, option, evaluation, cleanClose) {
 function applyResolutionConsequences(caseItem, option, evaluation) {
   const cleanClose = evaluation.quality === "Clean";
   const prefix = cleanClose ? "Clean close" : evaluation.quality;
-  addFeed(prefix, `${caseItem.title}: ${option.label}. ${evaluation.severity} consequence risk.`, cleanClose ? "good" : "bad", state.time, evaluation.severity);
+  const consequenceReason = consequenceReasonFor(caseItem, cleanClose);
+  const feedTags = ["Immediate"];
+  if (evaluation.checks.policyViolation) {
+    feedTags.push("Policy");
+  }
+  addFeed(
+    prefix,
+    `${caseItem.title}: ${option.label}. ${evaluation.severity} consequence risk. Why it mattered: ${consequenceReason}`,
+    cleanClose ? "good" : "bad",
+    state.time,
+    evaluation.severity,
+    feedTags
+  );
 
   const immediateChanges = metricChangesForEvaluation(caseItem, option, evaluation, cleanClose);
   Object.entries(immediateChanges).forEach(([metric, amount]) => changeMetric(metric, amount));
@@ -1471,9 +1813,10 @@ function applyResolutionConsequences(caseItem, option, evaluation) {
   const scheduledItem = {
     minute: followUpMinute,
     title: cleanClose ? "Closure confirmed" : `${evaluation.severity} consequence landed`,
-    text: cleanClose ? caseItem.consequence.good : caseItem.consequence.bad,
+    text: `${cleanClose ? caseItem.consequence.good : caseItem.consequence.bad} Why it mattered: ${consequenceReason}`,
     tone: cleanClose ? "good" : "bad",
     severity: evaluation.severity,
+    tags: cleanClose ? ["Delayed"] : (evaluation.checks.policyViolation ? ["Delayed", "Policy"] : ["Delayed"]),
     metricChanges: cleanClose
       ? { trust: 2 }
       : {
@@ -1485,6 +1828,7 @@ function applyResolutionConsequences(caseItem, option, evaluation) {
 
   if (!caseItem.isFollowUp) {
     scheduledItem.followUp = makeFollowUpCase(caseItem, cleanClose, followUpMinute);
+    scheduledItem.tags.push("Follow-up");
     scheduledItem.text += cleanClose
       ? " A closure follow-up entered the queue."
       : " A corrective follow-up entered the queue.";
@@ -1519,6 +1863,7 @@ function gradeLabel(score) {
 
 function showSummary() {
   const avg = Math.round(Object.values(state.metrics).reduce((sum, value) => sum + value, 0) / 4);
+  const modifier = modifierById(state.activeModifier);
   const resolved = state.cases.filter((item) => item.status === "resolved").length;
   const reviews = state.reviews;
   const clean = reviews.filter((item) => item.quality === "Clean").length;
@@ -1527,26 +1872,63 @@ function showSummary() {
   const policy = reviews.filter((item) => item.quality === "Policy Violation").length;
   const major = reviews.filter((item) => item.severity === "Major").length;
   const followUps = state.cases.filter((item) => item.isFollowUp).length;
+  const riskyFollowUps = state.cases.filter((item) => item.isFollowUp && item.origin?.quality !== "Clean").length;
+  const warningsAcknowledged = state.cases.reduce((sum, item) => sum + (item.audit || []).filter((entry) => entry.title === "Pre-close warning acknowledged").length, 0);
+  const policyWarningsAvoided = reviews.filter((item) => item.quality !== "Policy Violation" && (item.readinessWarnings || []).some((warning) => warning.includes("Would violate") || warning.includes("Security-sensitive"))).length;
+  const repeatedPattern = repeatedPatternFor(state.cases.filter((item) => item.arrival <= state.time && !item.isFollowUp));
+  const skills = skillBreakdownForReviews(reviews);
+  const narrative = skillNarrative(skills);
+  const replayOptions = shiftModifiers.filter((item) => item.id !== state.activeModifier).slice(0, 3);
   const best = reviews.filter((item) => item.score !== null).sort((a, b) => b.score - a.score)[0];
   const worst = reviews.filter((item) => item.quality !== "Clean").sort((a, b) => a.score - b.score)[0];
 
   els.summaryBody.innerHTML = `
     <p><strong>${gradeLabel(avg)}</strong> with a shift health score of ${avg}.</p>
+    <p class="shift-seed">Shift seed ${state.shiftSeed} | ${modifier.label}</p>
     <ul class="summary-list">
       <li>${resolved} of ${state.cases.length} incidents resolved.</li>
       <li>${clean} clean closes, ${risky} risky closes, ${incomplete} incomplete closes, ${policy} policy violations.</li>
       <li>${followUps} follow-up tickets generated and ${major} major consequence${major === 1 ? "" : "s"} recorded.</li>
+      <li>${warningsAcknowledged} pre-close warning${warningsAcknowledged === 1 ? "" : "s"} acknowledged and ${policyWarningsAvoided} policy warning${policyWarningsAvoided === 1 ? "" : "s"} avoided.</li>
+      <li>${riskyFollowUps} follow-up ticket${riskyFollowUps === 1 ? "" : "s"} came from risky or policy-violating closes.</li>
+      <li>Most repeated risk pattern: ${repeatedPattern ? `${repeatedPattern.label} across ${repeatedPattern.count} incidents` : "No repeated pattern detected"}.</li>
       <li>Best triage call: ${best ? `${best.title} (${best.score})` : "None yet"}.</li>
       <li>Most expensive mistake: ${worst ? `${worst.title} (${worst.quality}, ${worst.severity})` : "None"}.</li>
       <li>Security ${state.metrics.security}, SLA ${state.metrics.sla}, Trust ${state.metrics.trust}, Budget ${state.metrics.budget}.</li>
     </ul>
+    <div class="skill-grid">
+      ${skills.map((skill) => `
+        <div>
+          <span>${skill.label}</span>
+          <strong>${skill.score}%</strong>
+        </div>
+      `).join("")}
+    </div>
+    <div class="debrief-line">
+      <span>Strength</span>
+      <p>${narrative.strength}</p>
+    </div>
+    <div class="debrief-line weak">
+      <span>Weak Spot</span>
+      <p>${narrative.weakness}</p>
+    </div>
+    <h3>Replay Modifiers</h3>
+    <div class="modifier-grid">
+      ${replayOptions.map((option) => `
+        <button data-modifier="${option.id}" class="modifier-button">
+          <strong>${option.label}</strong>
+          <span>${option.description}</span>
+          <small>Seed ${option.seed}</small>
+        </button>
+      `).join("")}
+    </div>
     <p>Audit trails and consequence reviews are now part of the shift record.</p>
   `;
   els.summaryModal.classList.remove("hidden");
 }
 
-function restartGame() {
-  state = cloneState(initialState);
+function restartGame(modifierId = "standard") {
+  state = buildInitialState(modifierId);
   hideCloseWarning();
   hideCloseReview();
   els.summaryModal.classList.add("hidden");
@@ -1564,6 +1946,7 @@ function render() {
   els.openCount.textContent = open.length;
 
   renderShiftControl(available);
+  renderPatternHint(open);
   renderQueue(available);
   renderChannelStatus(open);
   renderResources();
@@ -1584,6 +1967,21 @@ function renderShiftControl(available) {
   els.advanceTime.textContent = noArrivalsYet ? "Start Shift" : "Wait 10m";
   els.advanceTime.title = noArrivalsYet ? "Start shift" : "Wait 10 minutes";
   els.advanceTime.setAttribute("aria-label", els.advanceTime.title);
+}
+
+function renderPatternHint(open) {
+  const pattern = strongestPattern(open);
+  if (!pattern) {
+    els.patternHint.classList.add("hidden");
+    els.patternHint.innerHTML = "";
+    return;
+  }
+
+  els.patternHint.classList.remove("hidden");
+  els.patternHint.innerHTML = `
+    <strong>Possible pattern</strong>
+    <span>${pattern.count} open incidents mention ${pattern.label}. Correlate before isolating.</span>
+  `;
 }
 
 function renderStageBar(item) {
@@ -1758,6 +2156,7 @@ function renderFeed() {
     <article class="feed-item ${item.tone} ${item.severity ? `severity-${item.severity.toLowerCase()}` : ""}">
       <span class="feed-time">${formatTime(item.minute)}</span>
       ${item.severity ? `<span class="feed-severity">${item.severity}</span>` : ""}
+      ${item.tags?.length ? `<span class="feed-tags">${item.tags.map((tag) => `<span>${tag}</span>`).join("")}</span>` : ""}
       <strong>${item.title}</strong>
       <p>${item.text}</p>
     </article>
@@ -1782,9 +2181,9 @@ function renderRules() {
 }
 
 function renderAuditPreview(item) {
-  const entries = (item.audit || []).slice(0, 4);
+  const entries = (item.audit || []).slice(0, 5);
   if (!entries.length) return "No audit entries yet";
-  return `<ol class="case-audit">${entries.map((entry) => `
+  return `<ol class="case-audit case-memory">${entries.map((entry) => `
     <li><span>${formatTime(entry.minute)}</span><strong>${entry.title}</strong><p>${entry.text}</p></li>
   `).join("")}</ol>`;
 }
@@ -1815,7 +2214,7 @@ function renderCase(item) {
     <dt>Classification</dt><dd>${item.diagnosis ? labelFor(diagnosisOptions, item.diagnosis) : "Undiagnosed"} | ${item.category ? labelFor(categoryOptions, item.category) : "Uncategorized"} | ${item.priority || "No priority"}</dd>
     <dt>Troubleshooting</dt><dd>${item.troubleshooting.length ? item.troubleshooting.map((step) => labelFor(troubleshootingOptions, step)).join(", ") : "No step chosen"}</dd>
     ${item.quality ? `<dt>Close Review</dt><dd>${item.quality} | ${item.severity} | Score ${item.score}</dd>` : ""}
-    <dt>Audit Trail</dt><dd>${renderAuditPreview(item)}</dd>
+    <dt>Case Memory</dt><dd>${renderAuditPreview(item)}</dd>
     ${Object.entries(item.facts).map(([key, value]) => `<dt>${key}</dt><dd>${value}</dd>`).join("")}
   `;
 
@@ -1968,7 +2367,13 @@ els.advanceTime.addEventListener("click", () => {
   advance(10);
 });
 els.endShift.addEventListener("click", endShift);
-els.restartGame.addEventListener("click", restartGame);
+els.restartGame.addEventListener("click", () => restartGame("standard"));
+els.summaryBody.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-modifier]");
+  if (button) {
+    restartGame(button.dataset.modifier);
+  }
+});
 els.ackCloseReview.addEventListener("click", hideCloseReview);
 els.cancelCloseWarning.addEventListener("click", hideCloseWarning);
 els.confirmCloseWarning.addEventListener("click", confirmCloseWarning);
