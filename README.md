@@ -18,4 +18,6 @@ The current layout emphasizes the active ticket stage, with classification visib
 
 Gameplay readability features include queue signal tags, active-ticket risk lens, evidence progress, requirement status chips, clearer disabled-control hints, and richer investigation feedback.
 
+Consequence features include close-review audits, quality and severity ratings, severity-weighted metric fallout, specific follow-up tickets linked to original decisions, and a shift summary that reports clean closes, risky closes, policy violations, major consequences, and best/worst triage calls.
+
 Open `index.html` in a browser to play the current prototype.

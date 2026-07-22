@@ -391,16 +391,22 @@ const initialState = {
     { minute: START_MINUTE, title: "Desk ready", text: "Start the shift to receive calls, tickets, chats, monitoring alerts, and walk-ups.", tone: "neutral" }
   ],
   scheduled: [],
+  reviews: [],
   cases: cases.map((item) => ({
     ...item,
     status: "pending",
     revealed: ["initial"],
+    audit: [
+      { minute: item.arrival, title: "Ticket opened", text: `${item.channel} from ${item.requester}` }
+    ],
     diagnosis: null,
     category: null,
     priority: null,
     troubleshooting: [],
     resolution: null,
-    score: null
+    score: null,
+    quality: null,
+    severity: null
   }))
 };
 
@@ -442,7 +448,12 @@ const els = {
   endShift: document.querySelector("#endShift"),
   summaryModal: document.querySelector("#summaryModal"),
   summaryBody: document.querySelector("#summaryBody"),
-  restartGame: document.querySelector("#restartGame")
+  restartGame: document.querySelector("#restartGame"),
+  closeReviewModal: document.querySelector("#closeReviewModal"),
+  closeReviewTitle: document.querySelector("#closeReviewTitle"),
+  closeReviewBadge: document.querySelector("#closeReviewBadge"),
+  closeReviewBody: document.querySelector("#closeReviewBody"),
+  ackCloseReview: document.querySelector("#ackCloseReview")
 };
 
 function cloneState(source) {
@@ -487,6 +498,12 @@ function signalTags(item) {
   if (item.isFollowUp && !tags.includes("Follow-up")) {
     tags.unshift("Follow-up");
   }
+  if (item.quality && !tags.includes(item.quality)) {
+    tags.push(item.quality);
+  }
+  if (item.severity && !tags.includes(`${item.severity} severity`)) {
+    tags.push(`${item.severity} severity`);
+  }
   return tags;
 }
 
@@ -510,8 +527,8 @@ function selectedCase() {
   return state.cases.find((item) => item.id === state.selectedId) || null;
 }
 
-function addFeed(title, text, tone = "neutral", minute = state.time) {
-  state.feed.unshift({ title, text, tone, minute });
+function addFeed(title, text, tone = "neutral", minute = state.time, severity = null) {
+  state.feed.unshift({ title, text, tone, minute, severity });
 }
 
 function clampMetric(value) {
@@ -520,6 +537,21 @@ function clampMetric(value) {
 
 function changeMetric(name, amount) {
   state.metrics[name] = clampMetric(state.metrics[name] + amount);
+}
+
+function addAudit(caseItem, title, text, minute = state.time) {
+  if (!caseItem) return;
+  caseItem.audit.unshift({ minute, title, text });
+}
+
+function chosenTroubleshootingLabels(caseItem) {
+  return caseItem.troubleshooting.length
+    ? caseItem.troubleshooting.map((step) => labelFor(troubleshootingOptions, step)).join(", ")
+    : "None";
+}
+
+function chosenResolutionLabel(caseItem) {
+  return labelFor(resolutionOptions, caseItem.resolution);
 }
 
 function advance(minutes) {
@@ -555,7 +587,7 @@ function processScheduled() {
         syncSelectionFromCase(item.followUp);
       }
     }
-    addFeed(item.title, item.text, item.tone, item.minute);
+    addFeed(item.title, item.text, item.tone, item.minute, item.severity || null);
     Object.entries(item.metricChanges || {}).forEach(([metric, amount]) => changeMetric(metric, amount));
   });
 }
@@ -634,6 +666,7 @@ function reveal(caseItem, actionId) {
   const action = investigationActions.find((item) => item.id === actionId);
   const entry = caseItem.reveals[actionId];
   const progress = `Evidence ${evidenceCount(caseItem)}/${evidenceTotal(caseItem)}`;
+  addAudit(caseItem, action.label, `${entry.source}: ${entry.text}`);
   addFeed(action.label, `${caseItem.title}: ${entry.source} added. ${progress}. ${entry.text}`, entry.tone === "risk" ? "bad" : "good");
   advance(action.cost);
 }
@@ -643,6 +676,7 @@ function choosePriority(priority) {
   state.selectedPriority = priority;
   if (current && current.status !== "resolved") {
     current.priority = priority;
+    addAudit(current, "Priority set", priority);
   }
   render();
 }
@@ -652,6 +686,7 @@ function chooseDiagnosis(diagnosis) {
   state.selectedDiagnosis = diagnosis;
   if (current && current.status !== "resolved") {
     current.diagnosis = diagnosis;
+    addAudit(current, "Diagnosis set", labelFor(diagnosisOptions, diagnosis));
   }
   render();
 }
@@ -661,6 +696,7 @@ function chooseCategory(category) {
   state.selectedCategory = category;
   if (current && current.status !== "resolved") {
     current.category = category;
+    addAudit(current, "Category set", labelFor(categoryOptions, category));
   }
   render();
 }
@@ -676,6 +712,7 @@ function toggleTroubleshooting(stepId) {
     selected.delete(stepId);
     state.selectedTroubleshooting = [...selected];
     current.troubleshooting = [...selected];
+    addAudit(current, "Troubleshooting removed", labelFor(troubleshootingOptions, stepId));
     render();
     return;
   }
@@ -684,6 +721,7 @@ function toggleTroubleshooting(stepId) {
   selected.add(stepId);
   state.selectedTroubleshooting = [...selected];
   current.troubleshooting = [...selected];
+  addAudit(current, "Troubleshooting selected", step.label);
   addFeed("Troubleshooting", `${current.title}: ${step.label}.`, "neutral");
   advance(step.cost);
 }
@@ -712,9 +750,16 @@ function resolveCurrent(resolutionId) {
   current.troubleshooting = [...state.selectedTroubleshooting];
   current.resolution = resolutionId;
   current.status = "resolved";
-  current.score = scoreCase(current);
+  current.evaluation = evaluateCase(current);
+  current.score = current.evaluation.score;
+  current.quality = current.evaluation.quality;
+  current.severity = current.evaluation.severity;
+  addAudit(current, "Final action", `${option.label}: ${option.note}`);
+  addAudit(current, "Close review", `${current.quality} / ${current.severity} severity / score ${current.score}`);
 
-  applyResolutionConsequences(current, option);
+  current.review = makeCloseReview(current, option);
+  state.reviews.unshift(current.review);
+  applyResolutionConsequences(current, option, current.evaluation);
   advance(option.cost);
 
   const next = openCases()[0];
@@ -724,9 +769,10 @@ function resolveCurrent(resolutionId) {
   state.selectedPriority = next ? next.priority : current.priority;
   state.selectedTroubleshooting = next ? [...next.troubleshooting] : [...current.troubleshooting];
   render();
+  showCloseReview(current.review);
 }
 
-function scoreCase(caseItem) {
+function evaluateCase(caseItem) {
   const resolutionCorrect = caseItem.correctResolution === caseItem.resolution || caseItem.acceptAlso.includes(caseItem.resolution);
   const diagnosisCorrect = caseItem.correctDiagnosis === caseItem.diagnosis;
   const categoryCorrect = caseItem.correctCategory === caseItem.category;
@@ -752,38 +798,191 @@ function scoreCase(caseItem) {
     score -= 10;
   }
 
-  return Math.max(0, score);
+  const policyViolation = (
+    caseItem.securityRisk &&
+    !verified &&
+    ["reset_access", "remote_fix", "dispatch"].includes(caseItem.resolution)
+  ) || (
+    caseItem.correctResolution === "deny" &&
+    !["deny", "security"].includes(caseItem.resolution)
+  );
+
+  const reasons = [];
+  if (diagnosisCorrect) reasons.push("Diagnosis matched the evidence.");
+  else reasons.push("Diagnosis did not match the evidence.");
+  if (categoryCorrect) reasons.push("Category routed to the right owner.");
+  else reasons.push("Category would route to the wrong owner.");
+  if (priorityCorrect) reasons.push("Priority matched the incident impact.");
+  else reasons.push(`Priority should have been ${caseItem.correctPriority}.`);
+  if (troubleshootingCorrect) reasons.push("Troubleshooting step addressed the likely cause.");
+  else reasons.push("Troubleshooting step did not address the likely cause.");
+  if (verified) reasons.push("Identity/risk verification was documented.");
+  else if (caseItem.securityRisk) reasons.push("Security-sensitive request closed without identity verification.");
+  if (policyViolation) reasons.push("Policy violation: unsafe access or data handling decision.");
+
+  const finalScore = Math.max(0, score);
+  let quality = "Incomplete";
+  if (policyViolation) {
+    quality = "Policy Violation";
+  } else if (finalScore >= 85) {
+    quality = "Clean";
+  } else if (finalScore >= 70) {
+    quality = "Risky";
+  }
+
+  let severity = "Minor";
+  if (quality === "Policy Violation" || (caseItem.securityRisk && finalScore < 70) || (caseItem.correctPriority === "P1" && !resolutionCorrect)) {
+    severity = "Major";
+  } else if (quality === "Risky" || quality === "Incomplete" || !priorityCorrect || !resolutionCorrect) {
+    severity = "Moderate";
+  }
+
+  return {
+    score: finalScore,
+    quality,
+    severity,
+    reasons,
+    checks: {
+      diagnosisCorrect,
+      categoryCorrect,
+      troubleshootingCorrect,
+      resolutionCorrect,
+      priorityCorrect,
+      verified,
+      investigated,
+      policyViolation
+    }
+  };
+}
+
+function scoreCase(caseItem) {
+  return evaluateCase(caseItem).score;
+}
+
+function makeCloseReview(caseItem, option) {
+  return {
+    caseId: caseItem.id,
+    title: caseItem.title,
+    minute: state.time,
+    score: caseItem.score,
+    quality: caseItem.quality,
+    severity: caseItem.severity,
+    finalAction: option.label,
+    verification: caseItem.revealed.includes("verify") ? "Documented" : "Not documented",
+    diagnosis: caseItem.diagnosis ? labelFor(diagnosisOptions, caseItem.diagnosis) : "Missing",
+    category: caseItem.category ? labelFor(categoryOptions, caseItem.category) : "Missing",
+    priority: caseItem.priority || "Missing",
+    troubleshooting: chosenTroubleshootingLabels(caseItem),
+    reasons: caseItem.evaluation.reasons,
+    audit: caseItem.audit.slice(0, 6),
+    followUpGenerated: !caseItem.isFollowUp
+  };
+}
+
+function showCloseReview(review) {
+  els.closeReviewTitle.textContent = review.title;
+  els.closeReviewBadge.textContent = `${review.quality} | ${review.severity}`;
+  els.closeReviewBadge.className = `review-badge ${review.quality.toLowerCase().replace(/\s+/g, "-")} severity-${review.severity.toLowerCase()}`;
+  els.closeReviewBody.innerHTML = `
+    <div class="review-score">
+      <div><span>Score</span><strong>${review.score}</strong></div>
+      <div><span>Verification</span><strong>${review.verification}</strong></div>
+      <div><span>Follow-up</span><strong>${review.followUpGenerated ? "Queued later" : "None"}</strong></div>
+    </div>
+    <dl class="review-grid">
+      <dt>Diagnosis</dt><dd>${review.diagnosis}</dd>
+      <dt>Category</dt><dd>${review.category}</dd>
+      <dt>Priority</dt><dd>${review.priority}</dd>
+      <dt>Troubleshooting</dt><dd>${review.troubleshooting}</dd>
+      <dt>Final Action</dt><dd>${review.finalAction}</dd>
+    </dl>
+    <h3>Assessment</h3>
+    <ul class="review-list">
+      ${review.reasons.map((reason) => `<li>${reason}</li>`).join("")}
+    </ul>
+    <h3>Audit Trail</h3>
+    <ol class="audit-list">
+      ${review.audit.map((entry) => `<li><span>${formatTime(entry.minute)}</span><strong>${entry.title}</strong><p>${entry.text}</p></li>`).join("")}
+    </ol>
+  `;
+  els.closeReviewModal.classList.remove("hidden");
+}
+
+function hideCloseReview() {
+  els.closeReviewModal.classList.add("hidden");
+}
+
+function correctiveResolutionFor(caseItem) {
+  const byCategory = {
+    security: "security",
+    access: "security",
+    apps: "apps",
+    network: "network",
+    hardware: "dispatch",
+    asset: "dispatch"
+  };
+  return byCategory[caseItem.correctCategory] || "apps";
+}
+
+function followUpTitle(caseItem, good) {
+  if (good) {
+    return caseItem.securityRisk
+      ? `Closure audit: ${caseItem.title}`
+      : `User confirmation: ${caseItem.title}`;
+  }
+  if (caseItem.severity === "Major" && caseItem.securityRisk) {
+    return `Security review: ${caseItem.title}`;
+  }
+  if (caseItem.severity === "Major") {
+    return `Incident review: ${caseItem.title}`;
+  }
+  if (caseItem.correctPriority === "P1" || caseItem.risk.sla === "Critical") {
+    return `Manager complaint: ${caseItem.title}`;
+  }
+  return `Corrective follow-up: ${caseItem.title}`;
 }
 
 function makeFollowUpCase(caseItem, good, minute) {
   const correctiveOwner = caseItem.securityRisk ? "Security" : "Service owner";
+  const correctiveResolution = correctiveResolutionFor(caseItem);
+  const severity = caseItem.severity || (good ? "Minor" : "Moderate");
+  const originDecision = `${chosenResolutionLabel(caseItem)} after ${chosenTroubleshootingLabels(caseItem)}`;
+  const followTitle = followUpTitle(caseItem, good);
+  const originTag = `From: ${caseItem.title.split(":")[0].slice(0, 18)}`;
   return {
     id: `follow-${caseItem.id}-${minute}-${good ? "closure" : "review"}`,
     arrival: minute,
     channel: "Follow-up",
-    title: good ? `Confirm closure: ${caseItem.title}` : `Incident review: ${caseItem.title}`,
-    requester: good ? "Supervisor desk" : "Incident manager",
+    title: followTitle,
+    requester: good ? "Supervisor desk" : (severity === "Major" ? "Incident manager" : "Team manager"),
     department: caseItem.department,
     location: caseItem.location,
-    signals: good ? ["Follow-up", "Documentation", "Closure check"] : ["Follow-up", "Corrective action", caseItem.securityRisk ? "Security risk" : "SLA risk"],
+    signals: good
+      ? ["Follow-up", "Closure", originTag]
+      : ["Follow-up", `${severity} review`, caseItem.securityRisk ? "Security risk" : "SLA risk"],
     risk: {
       security: good ? "Low" : (caseItem.securityRisk ? "High" : "Medium"),
-      impact: good ? "Handoff quality" : "Service recovery",
+      impact: good ? "Handoff quality" : `${severity} corrective work`,
       verification: "Ticket-linked",
-      sla: good ? "Low" : "Rising"
+      sla: good ? "Low" : (severity === "Major" ? "Critical" : "Rising")
     },
     report: good
       ? "The incident is stable. Confirm the user impact is closed, document what changed, and leave a clean handoff."
       : "The earlier decision created fallout. Re-check the record, contain remaining risk, and route the corrective action.",
     facts: {
       Original: caseItem.title,
+      "Original decision": originDecision,
+      "Close quality": `${caseItem.quality} / ${severity}`,
+      "Original score": String(caseItem.score),
       Category: labelFor(categoryOptions, caseItem.correctCategory),
       Outcome: good ? "Closure audit" : "Corrective follow-up"
     },
     evidence: [
       {
-        source: good ? "Supervisor note" : "Escalation note",
-        text: good ? caseItem.consequence.good : caseItem.consequence.bad,
+        source: good ? "Closure note" : `${severity} escalation`,
+        text: good
+          ? `${caseItem.consequence.good} Confirm notes and user impact before archiving.`
+          : `${caseItem.consequence.bad} Original close was ${caseItem.quality}: ${caseItem.evaluation.reasons.slice(-2).join(" ")}`,
         tone: good ? "good" : "risk"
       }
     ],
@@ -797,62 +996,95 @@ function makeFollowUpCase(caseItem, good, minute) {
     correctDiagnosis: caseItem.correctDiagnosis,
     correctCategory: caseItem.correctCategory,
     correctTroubleshooting: ["document_notes"],
-    correctResolution: good ? "monitor" : (caseItem.securityRisk ? "security" : "apps"),
+    correctResolution: good ? "monitor" : correctiveResolution,
     acceptAlso: good ? ["remote_fix"] : ["dispatch"],
     securityRisk: !good && caseItem.securityRisk,
     isFollowUp: true,
+    origin: {
+      id: caseItem.id,
+      title: caseItem.title,
+      decision: originDecision,
+      quality: caseItem.quality,
+      severity
+    },
     consequence: {
       good: "The follow-up is documented and closed cleanly.",
       bad: "The follow-up stayed muddy and the next analyst has to reopen it."
     },
     status: "pending",
     revealed: ["initial"],
+    audit: [
+      { minute, title: "Follow-up opened", text: `${followTitle} generated from ${caseItem.title}` },
+      { minute: state.time, title: "Original decision", text: `${originDecision} / ${caseItem.quality} / ${severity}` }
+    ],
     diagnosis: null,
     category: null,
     priority: null,
     troubleshooting: [],
     resolution: null,
-    score: null
+    score: null,
+    quality: null,
+    severity: null
   };
 }
 
-function applyResolutionConsequences(caseItem, option) {
-  const good = caseItem.score >= 70;
-  const prefix = good ? "Handled" : "Risk accepted";
-  addFeed(prefix, `${caseItem.title}: ${option.label}.`, good ? "good" : "bad");
-
-  if (good) {
-    changeMetric("trust", 4);
-    changeMetric("sla", caseItem.correctPriority === caseItem.priority ? 5 : 1);
-    changeMetric("security", caseItem.securityRisk ? 6 : 1);
-    changeMetric("budget", option.resource ? -2 : 1);
-  } else {
-    changeMetric("trust", -6);
-    changeMetric("sla", caseItem.correctPriority === caseItem.priority ? -2 : -8);
-    changeMetric("security", caseItem.securityRisk ? -10 : -2);
-    changeMetric("budget", option.resource ? -6 : -3);
+function metricChangesForEvaluation(caseItem, option, evaluation, cleanClose) {
+  if (cleanClose) {
+    return {
+      trust: 4,
+      sla: caseItem.correctPriority === caseItem.priority ? 5 : 1,
+      security: caseItem.securityRisk ? 6 : 1,
+      budget: option.resource ? -2 : 1
+    };
   }
 
-  const followUpMinute = state.time + (good ? 28 : 36);
+  const severityPenalty = evaluation.severity === "Major" ? 2 : evaluation.severity === "Moderate" ? 1 : 0;
+  return {
+    trust: -5 - severityPenalty,
+    sla: (caseItem.correctPriority === caseItem.priority ? -2 : -7) - severityPenalty,
+    security: (caseItem.securityRisk ? -8 : -2) - (severityPenalty * 2),
+    budget: (option.resource ? -5 : -3) - severityPenalty
+  };
+}
+
+function applyResolutionConsequences(caseItem, option, evaluation) {
+  const cleanClose = evaluation.quality === "Clean";
+  const prefix = cleanClose ? "Clean close" : evaluation.quality;
+  addFeed(prefix, `${caseItem.title}: ${option.label}. ${evaluation.severity} consequence risk.`, cleanClose ? "good" : "bad", state.time, evaluation.severity);
+
+  const immediateChanges = metricChangesForEvaluation(caseItem, option, evaluation, cleanClose);
+  Object.entries(immediateChanges).forEach(([metric, amount]) => changeMetric(metric, amount));
+
+  const delay = cleanClose ? 28 : evaluation.severity === "Major" ? 18 : 36;
+  const followUpMinute = state.time + delay;
   const scheduledItem = {
     minute: followUpMinute,
-    title: good ? "Consequence resolved" : "Consequence landed",
-    text: good ? caseItem.consequence.good : caseItem.consequence.bad,
-    tone: good ? "good" : "bad",
-    metricChanges: good ? { trust: 2 } : { trust: -5, sla: -4 }
+    title: cleanClose ? "Closure confirmed" : `${evaluation.severity} consequence landed`,
+    text: cleanClose ? caseItem.consequence.good : caseItem.consequence.bad,
+    tone: cleanClose ? "good" : "bad",
+    severity: evaluation.severity,
+    metricChanges: cleanClose
+      ? { trust: 2 }
+      : {
+        trust: evaluation.severity === "Major" ? -7 : -5,
+        sla: evaluation.severity === "Major" ? -7 : -4,
+        security: caseItem.securityRisk ? (evaluation.severity === "Major" ? -6 : -3) : 0
+      }
   };
 
   if (!caseItem.isFollowUp) {
-    scheduledItem.followUp = makeFollowUpCase(caseItem, good, followUpMinute);
-    scheduledItem.text += good
+    scheduledItem.followUp = makeFollowUpCase(caseItem, cleanClose, followUpMinute);
+    scheduledItem.text += cleanClose
       ? " A closure follow-up entered the queue."
       : " A corrective follow-up entered the queue.";
   }
 
   state.scheduled.push(scheduledItem);
+  addAudit(caseItem, "Consequence scheduled", `${scheduledItem.title} at ${formatTime(followUpMinute)}`);
 }
 
 function endShift() {
+  hideCloseReview();
   const unresolved = openCases().length;
   if (unresolved > 0) {
     changeMetric("sla", -unresolved * 5);
@@ -876,24 +1108,34 @@ function gradeLabel(score) {
 function showSummary() {
   const avg = Math.round(Object.values(state.metrics).reduce((sum, value) => sum + value, 0) / 4);
   const resolved = state.cases.filter((item) => item.status === "resolved").length;
-  const perfect = state.cases.filter((item) => item.score >= 90).length;
-  const missed = state.cases.filter((item) => item.status === "resolved" && item.score < 70).length;
+  const reviews = state.reviews;
+  const clean = reviews.filter((item) => item.quality === "Clean").length;
+  const risky = reviews.filter((item) => item.quality === "Risky").length;
+  const incomplete = reviews.filter((item) => item.quality === "Incomplete").length;
+  const policy = reviews.filter((item) => item.quality === "Policy Violation").length;
+  const major = reviews.filter((item) => item.severity === "Major").length;
+  const followUps = state.cases.filter((item) => item.isFollowUp).length;
+  const best = reviews.filter((item) => item.score !== null).sort((a, b) => b.score - a.score)[0];
+  const worst = reviews.filter((item) => item.quality !== "Clean").sort((a, b) => a.score - b.score)[0];
 
   els.summaryBody.innerHTML = `
     <p><strong>${gradeLabel(avg)}</strong> with a shift health score of ${avg}.</p>
     <ul class="summary-list">
       <li>${resolved} of ${state.cases.length} incidents resolved.</li>
-      <li>${perfect} clean calls with verification, urgency, and routing aligned.</li>
-      <li>${missed} decisions created later consequences.</li>
+      <li>${clean} clean closes, ${risky} risky closes, ${incomplete} incomplete closes, ${policy} policy violations.</li>
+      <li>${followUps} follow-up tickets generated and ${major} major consequence${major === 1 ? "" : "s"} recorded.</li>
+      <li>Best triage call: ${best ? `${best.title} (${best.score})` : "None yet"}.</li>
+      <li>Most expensive mistake: ${worst ? `${worst.title} (${worst.quality}, ${worst.severity})` : "None"}.</li>
       <li>Security ${state.metrics.security}, SLA ${state.metrics.sla}, Trust ${state.metrics.trust}, Budget ${state.metrics.budget}.</li>
     </ul>
-    <p>The next build can add randomized identities, longer shifts, and a formal case-note review.</p>
+    <p>Audit trails and consequence reviews are now part of the shift record.</p>
   `;
   els.summaryModal.classList.remove("hidden");
 }
 
 function restartGame() {
   state = cloneState(initialState);
+  hideCloseReview();
   els.summaryModal.classList.add("hidden");
   unlockArrivals();
   render();
@@ -1005,6 +1247,7 @@ function renderQueue(items) {
           <span class="channel-badge">${item.channel}</span>
           ${item.category ? `<span class="category-badge">${labelFor(categoryOptions, item.category)}</span>` : ""}
           ${item.priority ? `<span class="priority-badge">${item.priority}</span>` : ""}
+          ${item.quality ? `<span class="quality-badge severity-${item.severity.toLowerCase()}">${item.quality}</span>` : ""}
         </span>
       </button>
     `;
@@ -1053,8 +1296,9 @@ function renderMetrics() {
 
 function renderFeed() {
   els.feed.innerHTML = state.feed.slice(0, 18).map((item) => `
-    <article class="feed-item ${item.tone}">
+    <article class="feed-item ${item.tone} ${item.severity ? `severity-${item.severity.toLowerCase()}` : ""}">
       <span class="feed-time">${formatTime(item.minute)}</span>
+      ${item.severity ? `<span class="feed-severity">${item.severity}</span>` : ""}
       <strong>${item.title}</strong>
       <p>${item.text}</p>
     </article>
@@ -1063,6 +1307,14 @@ function renderFeed() {
 
 function renderRules() {
   els.rulesList.innerHTML = activeRules().map((rule) => `<li>${rule.text}</li>`).join("");
+}
+
+function renderAuditPreview(item) {
+  const entries = (item.audit || []).slice(0, 4);
+  if (!entries.length) return "No audit entries yet";
+  return `<ol class="case-audit">${entries.map((entry) => `
+    <li><span>${formatTime(entry.minute)}</span><strong>${entry.title}</strong><p>${entry.text}</p></li>
+  `).join("")}</ol>`;
 }
 
 function renderCase(item) {
@@ -1081,14 +1333,17 @@ function renderCase(item) {
 
   els.caseTitle.textContent = item.title;
   els.caseSignals.innerHTML = signalTags(item).map((tag) => `<span>${tag}</span>`).join("");
-  els.caseStatus.textContent = item.status === "resolved" ? `Resolved: ${item.score}` : `${item.channel} | ${formatTime(item.arrival)}`;
+  els.caseStatus.textContent = item.status === "resolved" ? `${item.quality} | ${item.score}` : `${item.channel} | ${formatTime(item.arrival)}`;
   els.caseFacts.innerHTML = `
     <dt>Requester</dt><dd>${item.requester}</dd>
     <dt>Department</dt><dd>${item.department}</dd>
     <dt>Location</dt><dd>${item.location}</dd>
     <dt>Report</dt><dd>${item.report}</dd>
+    ${item.origin ? `<dt>Original Decision</dt><dd>${item.origin.decision} | ${item.origin.quality} | ${item.origin.severity}</dd>` : ""}
     <dt>Classification</dt><dd>${item.diagnosis ? labelFor(diagnosisOptions, item.diagnosis) : "Undiagnosed"} | ${item.category ? labelFor(categoryOptions, item.category) : "Uncategorized"} | ${item.priority || "No priority"}</dd>
     <dt>Troubleshooting</dt><dd>${item.troubleshooting.length ? item.troubleshooting.map((step) => labelFor(troubleshootingOptions, step)).join(", ") : "No step chosen"}</dd>
+    ${item.quality ? `<dt>Close Review</dt><dd>${item.quality} | ${item.severity} | Score ${item.score}</dd>` : ""}
+    <dt>Audit Trail</dt><dd>${renderAuditPreview(item)}</dd>
     ${Object.entries(item.facts).map(([key, value]) => `<dt>${key}</dt><dd>${value}</dd>`).join("")}
   `;
 
@@ -1220,6 +1475,7 @@ els.advanceTime.addEventListener("click", () => {
 });
 els.endShift.addEventListener("click", endShift);
 els.restartGame.addEventListener("click", restartGame);
+els.ackCloseReview.addEventListener("click", hideCloseReview);
 
 unlockArrivals();
 render();
