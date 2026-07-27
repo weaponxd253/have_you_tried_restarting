@@ -1,6 +1,6 @@
 # Have You Tried Restarting?
 
-A browser-based help-desk triage and investigation game.
+A browser-based help-desk investigation game.
 
 The player works a live shift where tickets, phone calls, chat messages, monitoring alerts, and walk-up requests arrive over time. Each incident follows a help-desk loop:
 
