@@ -14,7 +14,7 @@ The player works a live shift where tickets, phone calls, chat messages, monitor
 
 Each choice spends shift time, consumes limited resources, and affects trust, security posture, SLA health, and budget.
 
-The shift ends automatically at 12:00. Every open ticket has a response target based on its SLA risk (Critical 30m, Rising 60m, Low 90m); letting it wait past that target costs SLA health and user trust. Extra troubleshooting steps that do not address the cause are marked down in the close review.
+The shift ends automatically at 12:00. Every open ticket has a response target based on its SLA risk (Critical 30m, Rising 60m, Low 90m); letting it wait past that target costs SLA health and user trust. Extra troubleshooting steps that do not address the cause are marked down in the close review. Classification unlocks after the first investigation step, and a correct diagnosis or priority only earns full credit when the gathered evidence backs it (diagnostics or follow-up questions for diagnosis, records or diagnostics for priority).
 
 The current layout emphasizes the active ticket stage, with classification visible above the fold, compact channel pressure, and follow-up work returning to the live queue.
 

@@ -4,6 +4,8 @@ const SHIFT_WARNING_MINUTE = SHIFT_END_MINUTE - 30;
 const SLA_TARGET_MINUTES = { Critical: 30, Rising: 60, Low: 90 };
 const NEUTRAL_TROUBLESHOOTING = ["document_notes"];
 const EXTRA_STEP_PENALTY = 5;
+const DIAGNOSIS_EVIDENCE = ["diagnostics", "question"];
+const PRIORITY_EVIDENCE = ["records", "diagnostics"];
 
 const priorities = ["P1", "P2", "P3", "P4"];
 
@@ -683,6 +685,14 @@ function evidenceTotal(item) {
   return item ? item.evidence.length + Object.keys(item.reveals).length : 0;
 }
 
+function hasEvidence(item, actionIds) {
+  return Boolean(item) && actionIds.some((actionId) => item.revealed.includes(actionId));
+}
+
+function classificationUnlocked(item) {
+  return Boolean(item) && item.status !== "resolved" && item.revealed.length > 1;
+}
+
 function requirementItems(item) {
   return [
     { id: "verify", label: "Identity", done: Boolean(item && item.revealed.includes("verify")) },
@@ -827,6 +837,12 @@ function closeReadinessFor(item, resolutionId = null) {
     warnings.push({ kind: "risky", text: "No investigation beyond the initial report.", confirm: Boolean(resolutionId) });
   } else if (!evidenceReady) {
     warnings.push({ kind: "caution", text: "Evidence is still thin before close.", confirm: false });
+  }
+  if (draft.diagnosis && !hasEvidence(draft, DIAGNOSIS_EVIDENCE)) {
+    warnings.push({ kind: "caution", text: "Diagnosis is not backed by diagnostics or follow-up evidence yet.", confirm: false });
+  }
+  if (draft.priority && !hasEvidence(draft, PRIORITY_EVIDENCE)) {
+    warnings.push({ kind: "caution", text: "Priority is not backed by records or diagnostics yet.", confirm: false });
   }
   if (draft.securityRisk && !verified) {
     warnings.push({ kind: "policy", text: "Security-sensitive ticket lacks identity verification.", confirm: Boolean(resolutionId) });
@@ -1025,7 +1041,7 @@ function skillBreakdownForReviews(reviews) {
     {
       id: "evidence",
       label: "Evidence depth",
-      score: pct(reviews.filter((review) => review.checks.investigated).length, total),
+      score: pct(reviews.filter((review) => review.checks.diagnosisSupported && review.checks.prioritySupported).length, total),
       strength: "Built a useful record before closing.",
       weakness: "Some closes relied too heavily on the initial report."
     },
@@ -1361,6 +1377,7 @@ function reveal(caseItem, actionId) {
 
 function choosePriority(priority) {
   const current = selectedCase();
+  if (!classificationUnlocked(current)) return;
   state.selectedPriority = priority;
   if (current && current.status !== "resolved") {
     current.priority = priority;
@@ -1371,6 +1388,7 @@ function choosePriority(priority) {
 
 function chooseDiagnosis(diagnosis) {
   const current = selectedCase();
+  if (!classificationUnlocked(current)) return;
   state.selectedDiagnosis = diagnosis;
   if (current && current.status !== "resolved") {
     current.diagnosis = diagnosis;
@@ -1381,6 +1399,7 @@ function chooseDiagnosis(diagnosis) {
 
 function chooseCategory(category) {
   const current = selectedCase();
+  if (!classificationUnlocked(current)) return;
   state.selectedCategory = category;
   if (current && current.status !== "resolved") {
     current.category = category;
@@ -1495,14 +1514,16 @@ function evaluateCase(caseItem) {
   const priorityCorrect = caseItem.correctPriority === caseItem.priority;
   const verified = caseItem.revealed.includes("verify");
   const investigated = caseItem.revealed.includes("diagnostics") || caseItem.revealed.includes("records") || caseItem.revealed.includes("question");
+  const diagnosisSupported = hasEvidence(caseItem, DIAGNOSIS_EVIDENCE);
+  const prioritySupported = hasEvidence(caseItem, PRIORITY_EVIDENCE);
   const violatedRules = violatedRulesFor(caseItem);
   let score = 0;
 
-  if (diagnosisCorrect) score += 15;
+  if (diagnosisCorrect) score += diagnosisSupported ? 15 : 5;
   if (categoryCorrect) score += 15;
   if (troubleshootingHit) score += Math.max(0, 20 - extraTroubleshooting * EXTRA_STEP_PENALTY);
   if (resolutionCorrect) score += 25;
-  if (priorityCorrect) score += 15;
+  if (priorityCorrect) score += prioritySupported ? 15 : 5;
   if (verified) score += 5;
   if (investigated) score += 5;
 
@@ -1526,11 +1547,13 @@ function evaluateCase(caseItem) {
   const policyViolation = violatedRules.length > 0 || unsafeAccessViolation || restrictedDataViolation;
 
   const reasons = [];
-  if (diagnosisCorrect) reasons.push("Diagnosis matched the evidence.");
+  if (diagnosisCorrect && diagnosisSupported) reasons.push("Diagnosis matched the evidence.");
+  else if (diagnosisCorrect) reasons.push("Diagnosis was right, but no diagnostics or follow-up evidence backed it.");
   else reasons.push("Diagnosis did not match the evidence.");
   if (categoryCorrect) reasons.push("Category routed to the right owner.");
   else reasons.push("Category would route to the wrong owner.");
-  if (priorityCorrect) reasons.push("Priority matched the incident impact.");
+  if (priorityCorrect && prioritySupported) reasons.push("Priority matched the incident impact.");
+  else if (priorityCorrect) reasons.push("Priority was right, but no records or diagnostics backed the impact call.");
   else reasons.push(`Priority should have been ${caseItem.correctPriority}.`);
   if (troubleshootingCorrect) reasons.push("Troubleshooting step addressed the likely cause.");
   else if (troubleshootingHit) reasons.push(`Troubleshooting addressed the likely cause, but ${extraTroubleshooting} unnecessary step${extraTroubleshooting === 1 ? "" : "s"} muddied the record.`);
@@ -1574,6 +1597,8 @@ function evaluateCase(caseItem) {
       priorityCorrect,
       verified,
       investigated,
+      diagnosisSupported,
+      prioritySupported,
       policyViolation,
       violatedRules: violatedRules.map((rule) => rule.id)
     }
@@ -2349,6 +2374,8 @@ function renderCloseReadiness(item) {
 function renderDecision(item) {
   const disabled = !item || item.status === "resolved";
   const missingClassification = !item || !item.diagnosis || !item.category || !item.priority;
+  const classifyDisabled = !classificationUnlocked(item);
+  const classifyTitle = classifyDisabled && !disabled ? ' title="Gather at least one piece of evidence before classifying."' : "";
   const troubleshootDisabled = disabled || missingClassification;
   const resolutionDisabled = troubleshootDisabled || !item.troubleshooting.length;
   const missingNames = requirementItems(item).filter((requirement) => ["diagnosis", "category", "priority"].includes(requirement.id) && !requirement.done).map((requirement) => requirement.label);
@@ -2369,15 +2396,15 @@ function renderDecision(item) {
   }
 
   els.diagnosisControl.innerHTML = diagnosisOptions.map((diagnosis) => `
-    <button data-diagnosis="${diagnosis.id}" class="${state.selectedDiagnosis === diagnosis.id ? "selected" : ""}" ${disabled ? "disabled" : ""}>${diagnosis.label}</button>
+    <button data-diagnosis="${diagnosis.id}" class="${state.selectedDiagnosis === diagnosis.id ? "selected" : ""}" ${classifyDisabled ? "disabled" : ""}${classifyTitle}>${diagnosis.label}</button>
   `).join("");
 
   els.categoryControl.innerHTML = categoryOptions.map((category) => `
-    <button data-category="${category.id}" class="${state.selectedCategory === category.id ? "selected" : ""}" ${disabled ? "disabled" : ""}>${category.label}</button>
+    <button data-category="${category.id}" class="${state.selectedCategory === category.id ? "selected" : ""}" ${classifyDisabled ? "disabled" : ""}${classifyTitle}>${category.label}</button>
   `).join("");
 
   els.priorityControl.innerHTML = priorities.map((priority) => `
-    <button data-priority="${priority}" class="${state.selectedPriority === priority ? "selected" : ""}" ${disabled ? "disabled" : ""}>${priority}</button>
+    <button data-priority="${priority}" class="${state.selectedPriority === priority ? "selected" : ""}" ${classifyDisabled ? "disabled" : ""}${classifyTitle}>${priority}</button>
   `).join("");
 
   els.troubleshootControl.innerHTML = troubleshootingOptions.map((step) => `
