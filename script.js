@@ -610,6 +610,63 @@ const els = {
   confirmCloseWarning: document.querySelector("#confirmCloseWarning")
 };
 
+let modalReturnFocus = null;
+
+function openModal(modal, initialFocus) {
+  if (modal.classList.contains("hidden") && !topModal()) {
+    modalReturnFocus = document.activeElement;
+  }
+  modal.classList.remove("hidden");
+  initialFocus?.focus();
+}
+
+function closeModal(modal) {
+  if (modal.classList.contains("hidden")) return;
+  modal.classList.add("hidden");
+  const next = topModal();
+  if (next) {
+    focusableIn(next)[0]?.focus();
+  } else {
+    // The control that opened the modal may have been re-rendered away; fall back to the next-action prompt.
+    const target = modalReturnFocus && modalReturnFocus !== document.body && document.contains(modalReturnFocus) ? modalReturnFocus : els.nextActionButton;
+    target.focus({ preventScroll: true });
+    modalReturnFocus = null;
+  }
+}
+
+function topModal() {
+  return [...document.querySelectorAll(".modal-backdrop:not(.hidden)")].pop() || null;
+}
+
+function focusableIn(container) {
+  return [...container.querySelectorAll("button:not([disabled]), [href], [tabindex]:not([tabindex='-1'])")];
+}
+
+function handleModalKeys(event) {
+  const modal = topModal();
+  if (!modal) return;
+  if (event.key === "Escape") {
+    if (modal === els.closeReviewModal) hideCloseReview();
+    if (modal === els.closeWarningModal) hideCloseWarning();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = focusableIn(modal);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!modal.contains(document.activeElement)) {
+    event.preventDefault();
+    first.focus();
+  } else if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function cloneState(source) {
   return JSON.parse(JSON.stringify(source));
 }
@@ -620,7 +677,7 @@ function modifierById(modifierId) {
 
 function modifierArrivalOffset(caseItem, modifier) {
   const caseOffset = modifier.arrivalOffsetsByCase?.[caseItem.id] || 0;
-  const tagOffset = (caseItem.ruleTags || []).reduce((sum, tag) => sum + (modifier.arrivalOffsetsByTag?.[tag] || 0), 0);
+  const tagOffset = Math.min(0, ...(caseItem.ruleTags || []).map((tag) => modifier.arrivalOffsetsByTag?.[tag] || 0));
   return caseOffset + tagOffset;
 }
 
@@ -896,9 +953,16 @@ function closeReadinessFor(item, resolutionId = null) {
   };
 }
 
+function resourceExhausted(option) {
+  return Boolean(option.resource) && state.resources[option.resource].remaining <= 0;
+}
+
 function finalActionHintFor(item, option, disabled) {
   if (disabled || !item) {
     return { tone: "muted", text: "Locked until classification and troubleshooting are complete." };
+  }
+  if (resourceExhausted(option)) {
+    return { tone: "muted", text: `No ${state.resources[option.resource].label.toLowerCase()} left this shift.` };
   }
 
   const readiness = closeReadinessFor(item, option.id);
@@ -1179,7 +1243,7 @@ function unlockArrivals() {
       item.status = "new";
       newArrival = true;
       addFeed("New " + item.channel.toLowerCase(), item.title, "neutral", item.arrival, null, ["New"]);
-      if (!state.selectedId) {
+      if (!selectedCase() || selectedCase().status === "resolved") {
         state.selectedId = item.id;
         syncSelectionFromCase(item);
       }
@@ -1198,7 +1262,7 @@ function processScheduled() {
       const hadOpenWork = openCases().length > 0;
       state.cases.push(item.followUp);
       item.followUp.status = "new";
-      if (!hadOpenWork || !state.selectedId) {
+      if (!hadOpenWork || !selectedCase() || selectedCase().status === "resolved") {
         state.selectedId = item.followUp.id;
         syncSelectionFromCase(item.followUp);
       }
@@ -1428,6 +1492,14 @@ function toggleTroubleshooting(stepId) {
   selected.add(stepId);
   state.selectedTroubleshooting = [...selected];
   current.troubleshooting = [...selected];
+  // Time already spent on a step is not refunded on removal, so re-adding it is free.
+  current.troubleshootingPerformed = current.troubleshootingPerformed || [];
+  if (current.troubleshootingPerformed.includes(stepId)) {
+    addAudit(current, "Troubleshooting reselected", step.label);
+    render();
+    return;
+  }
+  current.troubleshootingPerformed.push(stepId);
   addAudit(current, "Troubleshooting selected", step.label);
   addFeed("Troubleshooting", `${current.title}: ${step.label}.`, "neutral");
   advance(step.cost);
@@ -1440,8 +1512,7 @@ function requestResolve(resolutionId) {
   }
 
   const option = resolutionOptions.find((item) => item.id === resolutionId);
-  if (option.resource && state.resources[option.resource].remaining <= 0) {
-    resolveCurrent(resolutionId);
+  if (resourceExhausted(option)) {
     return;
   }
 
@@ -1461,10 +1532,7 @@ function resolveCurrent(resolutionId, readinessSnapshot = null) {
   }
 
   const option = resolutionOptions.find((item) => item.id === resolutionId);
-  if (option.resource && state.resources[option.resource].remaining <= 0) {
-    addFeed("Resource unavailable", `${state.resources[option.resource].label} are already committed. Pick another path or wait.`, "bad");
-    changeMetric("sla", -3);
-    render();
+  if (resourceExhausted(option)) {
     return;
   }
 
@@ -1605,10 +1673,6 @@ function evaluateCase(caseItem) {
   };
 }
 
-function scoreCase(caseItem) {
-  return evaluateCase(caseItem).score;
-}
-
 function makeCloseReview(caseItem, option) {
   const readiness = caseItem.closeReadiness || closeReadinessFor(caseItem, caseItem.resolution);
   return {
@@ -1675,11 +1739,11 @@ function showCloseReview(review) {
       ${review.audit.map((entry) => `<li><span>${formatTime(entry.minute)}</span><strong>${entry.title}</strong><p>${entry.text}</p></li>`).join("")}
     </ol>
   `;
-  els.closeReviewModal.classList.remove("hidden");
+  openModal(els.closeReviewModal, els.ackCloseReview);
 }
 
 function hideCloseReview() {
-  els.closeReviewModal.classList.add("hidden");
+  closeModal(els.closeReviewModal);
 }
 
 function showCloseWarning(resolutionId, readiness) {
@@ -1694,12 +1758,12 @@ function showCloseWarning(resolutionId, readiness) {
       ${readiness.confirmationWarnings.map((warning) => `<li>${warning.text}</li>`).join("")}
     </ul>
   `;
-  els.closeWarningModal.classList.remove("hidden");
+  openModal(els.closeWarningModal, els.cancelCloseWarning);
 }
 
 function hideCloseWarning() {
   pendingResolutionId = null;
-  els.closeWarningModal.classList.add("hidden");
+  closeModal(els.closeWarningModal);
 }
 
 function confirmCloseWarning() {
@@ -1920,6 +1984,7 @@ function endShift() {
     return;
   }
   state.shiftEnded = true;
+  state.shiftEndMinute = state.time;
   const unresolved = openCases().length;
   if (unresolved > 0) {
     changeMetric("sla", -unresolved * 5);
@@ -1944,7 +2009,9 @@ function gradeLabel(score) {
 function showSummary() {
   const avg = Math.round(Object.values(state.metrics).reduce((sum, value) => sum + value, 0) / 4);
   const modifier = modifierById(state.activeModifier);
-  const resolved = state.cases.filter((item) => item.status === "resolved").length;
+  const shiftEndMinute = state.shiftEndMinute ?? state.time;
+  const shiftCases = state.cases.filter((item) => item.arrival <= shiftEndMinute);
+  const resolved = shiftCases.filter((item) => item.status === "resolved").length;
   const reviews = state.reviews;
   const clean = reviews.filter((item) => item.quality === "Clean").length;
   const risky = reviews.filter((item) => item.quality === "Risky").length;
@@ -1956,7 +2023,7 @@ function showSummary() {
   const warningsAcknowledged = state.cases.reduce((sum, item) => sum + (item.audit || []).filter((entry) => entry.title === "Pre-close warning acknowledged").length, 0);
   const policyWarningsAvoided = reviews.filter((item) => item.quality !== "Policy Violation" && (item.readinessWarnings || []).some((warning) => warning.includes("Would violate") || warning.includes("Security-sensitive"))).length;
   const slaBreaches = state.cases.filter((item) => item.slaBreached).length;
-  const repeatedPattern = repeatedPatternFor(state.cases.filter((item) => item.arrival <= state.time && !item.isFollowUp));
+  const repeatedPattern = repeatedPatternFor(shiftCases.filter((item) => !item.isFollowUp));
   const skills = skillBreakdownForReviews(reviews);
   const narrative = skillNarrative(skills);
   const replayOptions = shiftModifiers.filter((item) => item.id !== state.activeModifier).slice(0, 3);
@@ -1967,7 +2034,7 @@ function showSummary() {
     <p><strong>${gradeLabel(avg)}</strong> with a shift health score of ${avg}.</p>
     <p class="shift-seed">Shift seed ${state.shiftSeed} | ${modifier.label}</p>
     <ul class="summary-list">
-      <li>${resolved} of ${state.cases.length} incidents resolved.</li>
+      <li>${resolved} of ${shiftCases.length} incidents that arrived during the shift resolved.</li>
       <li>${clean} clean closes, ${risky} risky closes, ${incomplete} incomplete closes, ${policy} policy violations.</li>
       <li>${slaBreaches} SLA breach${slaBreaches === 1 ? "" : "es"} from tickets left waiting past their response target.</li>
       <li>${followUps} follow-up tickets generated and ${major} major consequence${major === 1 ? "" : "s"} recorded.</li>
@@ -2006,14 +2073,14 @@ function showSummary() {
     </div>
     <p>Audit trails and consequence reviews are now part of the shift record.</p>
   `;
-  els.summaryModal.classList.remove("hidden");
+  openModal(els.summaryModal, els.restartGame);
 }
 
 function restartGame(modifierId = "standard") {
   state = buildInitialState(modifierId);
   hideCloseWarning();
   hideCloseReview();
-  els.summaryModal.classList.add("hidden");
+  closeModal(els.summaryModal);
   unlockArrivals();
   render();
 }
@@ -2410,14 +2477,14 @@ function renderDecision(item) {
   els.troubleshootControl.innerHTML = troubleshootingOptions.map((step) => `
     <button data-troubleshoot="${step.id}" class="${state.selectedTroubleshooting.includes(step.id) ? "selected" : ""}" ${troubleshootDisabled ? "disabled" : ""}>
       ${step.label}
-      <small>${step.cost}m</small>
+      <small>${item?.troubleshootingPerformed?.includes(step.id) ? "Done" : `${step.cost}m`}</small>
     </button>
   `).join("");
 
   els.resolutionGrid.innerHTML = resolutionOptions.map((option) => {
     const hint = finalActionHintFor(item, option, resolutionDisabled);
     return `
-      <button class="resolution-button ${hint.tone}" data-resolution="${option.id}" title="${hint.text}" ${resolutionDisabled ? "disabled" : ""}>
+      <button class="resolution-button ${hint.tone}" data-resolution="${option.id}" title="${hint.text}" ${resolutionDisabled || resourceExhausted(option) ? "disabled" : ""}>
         ${option.label}
         <small>${option.cost}m${option.resource ? ` | ${state.resources[option.resource].remaining} left` : ""}</small>
         <span class="resolution-risk ${hint.tone}">${hint.text}</span>
@@ -2462,6 +2529,7 @@ els.summaryBody.addEventListener("click", (event) => {
 els.ackCloseReview.addEventListener("click", hideCloseReview);
 els.cancelCloseWarning.addEventListener("click", hideCloseWarning);
 els.confirmCloseWarning.addEventListener("click", confirmCloseWarning);
+document.addEventListener("keydown", handleModalKeys);
 els.nextActionButton.addEventListener("click", () => jumpToTarget(els.nextActionButton.dataset.target));
 
 unlockArrivals();
