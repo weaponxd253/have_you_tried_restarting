@@ -890,9 +890,7 @@ function closeReadinessFor(item, resolutionId = null) {
   if (!troubleshootingChosen) {
     warnings.push({ kind: "incomplete", text: "No troubleshooting step has been chosen.", confirm: false });
   }
-  if (draft.revealed.length === 1) {
-    warnings.push({ kind: "risky", text: "No investigation beyond the initial report.", confirm: Boolean(resolutionId) });
-  } else if (!evidenceReady) {
+  if (!evidenceReady) {
     warnings.push({ kind: "caution", text: "Evidence is still thin before close.", confirm: false });
   }
   if (draft.diagnosis && !hasEvidence(draft, DIAGNOSIS_EVIDENCE)) {
@@ -2032,7 +2030,7 @@ function showSummary() {
 
   els.summaryBody.innerHTML = `
     <p><strong>${gradeLabel(avg)}</strong> with a shift health score of ${avg}.</p>
-    <p class="shift-seed">Shift seed ${state.shiftSeed} | ${modifier.label}</p>
+    <p class="shift-seed">Scenario ${state.shiftSeed} | ${modifier.label}</p>
     <ul class="summary-list">
       <li>${resolved} of ${shiftCases.length} incidents that arrived during the shift resolved.</li>
       <li>${clean} clean closes, ${risky} risky closes, ${incomplete} incomplete closes, ${policy} policy violations.</li>
@@ -2067,7 +2065,7 @@ function showSummary() {
         <button data-modifier="${option.id}" class="modifier-button">
           <strong>${option.label}</strong>
           <span>${option.description}</span>
-          <small>Seed ${option.seed}</small>
+          <small>Scenario ${option.seed}</small>
         </button>
       `).join("")}
     </div>
@@ -2215,7 +2213,7 @@ function renderWorkflow(item) {
     { id: "investigate", label: "Investigate", full: "Ask questions or run diagnostics", done: Boolean(item && item.revealed.length > 1), active: stage.id === "investigate" },
     { id: "classify", label: "Classify", full: "Assign priority and category", done: Boolean(item && item.priority && item.category && item.diagnosis), active: stage.id === "classify" },
     { id: "troubleshoot", label: "Troubleshoot", full: "Choose troubleshooting steps", done: Boolean(item && item.troubleshooting.length), active: stage.id === "troubleshoot" },
-    { id: "close", label: "Close", full: "Resolve, escalate, dispatch, deny, postpone", done: Boolean(item && item.status === "resolved"), active: stage.id === "close" },
+    { id: "close", label: "Close", full: "Resolve, escalate, dispatch, deny, or monitor", done: Boolean(item && item.status === "resolved"), active: stage.id === "close" },
     { id: "follow", label: "Follow up", full: "Consequences and follow-up tickets", done: Boolean(item && item.status === "resolved"), active: stage.id === "follow" }
   ];
 

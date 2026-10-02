@@ -9,7 +9,7 @@ The player works a live shift where tickets, phone calls, chat messages, monitor
 3. Ask questions or run diagnostic tools.
 4. Assign priority and category.
 5. Choose troubleshooting steps.
-6. Resolve, escalate, dispatch, deny, or postpone.
+6. Resolve, escalate, dispatch, deny, or close it as monitored.
 7. Receive consequences and follow-up tickets.
 
 Each choice spends shift time, consumes limited resources, and affects trust, security posture, SLA health, and budget.
@@ -30,6 +30,6 @@ Decision-readiness features include close-readiness chips, final-action risk hin
 
 Shift-memory features include compact case memory, tagged supervisor feed events, clearer follow-up provenance, queue-level pattern hints, consequence reason lines, and a final summary that reports warnings, risky follow-ups, and repeated risk patterns.
 
-Learning and replay features include one-line supervisor debrief lessons, derived skill tracking, end-of-shift strengths and weak spots, deterministic shift seeds, and replay modifiers for security-heavy, outage-heavy, or lean-staffing shifts.
+Learning and replay features include one-line supervisor debrief lessons, derived skill tracking, end-of-shift strengths and weak spots, and replay modifiers for security-heavy, outage-heavy, or lean-staffing shifts. Every shift is a fixed, repeatable scenario identified by a scenario code; there is no randomness.
 
 Open `index.html` in a browser to play the current prototype.
