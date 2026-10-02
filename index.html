@@ -6,7 +6,7 @@
   <title>Have You Tried Restarting?</title>
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body data-view="ticket">
   <div class="app-shell">
     <header class="topbar">
       <div class="topbar-title">
@@ -163,6 +163,12 @@
         </section>
       </aside>
     </main>
+
+    <nav class="mobile-tabs" aria-label="Views">
+      <button data-view="ticket" aria-pressed="true">Ticket</button>
+      <button data-view="queue" aria-pressed="false">Queue <span id="mobileQueueCount" class="tab-count"></span></button>
+      <button data-view="feed" aria-pressed="false">Feed</button>
+    </nav>
   </div>
 
   <div class="modal-backdrop hidden" id="closeReviewModal">
@@ -175,7 +181,9 @@
         <div id="closeReviewBadge" class="review-badge">Review</div>
       </div>
       <div id="closeReviewBody"></div>
-      <button id="ackCloseReview" class="primary-button">Acknowledge</button>
+      <div class="modal-footer">
+        <button id="ackCloseReview" class="primary-button">Acknowledge</button>
+      </div>
     </section>
   </div>
 
@@ -200,7 +208,9 @@
     <section class="summary-modal" role="dialog" aria-modal="true" aria-labelledby="summaryTitle">
       <h2 id="summaryTitle">Shift Summary</h2>
       <div id="summaryBody"></div>
-      <button id="restartGame" class="primary-button">Start Standard Shift</button>
+      <div class="modal-footer">
+        <button id="restartGame" class="primary-button">Start Standard Shift</button>
+      </div>
     </section>
   </div>
 

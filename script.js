@@ -549,6 +549,7 @@ let pendingResolutionId = null;
 const els = {
   clock: document.querySelector("#clock"),
   closedCount: document.querySelector("#closedCount"),
+  mobileQueueCount: document.querySelector("#mobileQueueCount"),
   caseSla: document.querySelector("#caseSla"),
   openCount: document.querySelector("#openCount"),
   queueList: document.querySelector("#queueList"),
@@ -615,12 +616,22 @@ const els = {
 
 let modalReturnFocus = null;
 
+// Phone layout shows one of ticket / queue / feed at a time; wider layouts ignore the attribute.
+function setMobileView(view) {
+  document.body.dataset.view = view;
+  document.querySelectorAll(".mobile-tabs [data-view]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.view === view));
+  });
+}
+
 function openModal(modal, initialFocus) {
   if (modal.classList.contains("hidden") && !topModal()) {
     modalReturnFocus = document.activeElement;
   }
   modal.classList.remove("hidden");
-  initialFocus?.focus();
+  const dialog = modal.querySelector(".summary-modal");
+  if (dialog) dialog.scrollTop = 0;
+  initialFocus?.focus({ preventScroll: true });
 }
 
 function closeModal(modal) {
@@ -1533,6 +1544,7 @@ function jumpToTarget(target) {
     advance(Math.max(1, nextArrival - state.time));
     return;
   }
+  setMobileView(target === "queue" || target === "feed" ? target : "ticket");
   node.scrollIntoView({ behavior: "smooth", block: "start" });
   if (typeof node.focus === "function") {
     node.focus({ preventScroll: true });
@@ -1815,42 +1827,54 @@ function makeCloseReview(caseItem, option) {
   };
 }
 
+function isMissReason(reason) {
+  return /did not|should have|wrong owner|without|violated|violation|unnecessary|, but /i.test(reason);
+}
+
 function showCloseReview(review) {
   els.closeReviewTitle.textContent = review.title;
   els.closeReviewBadge.textContent = `${review.quality} | ${review.severity}`;
   els.closeReviewBadge.className = `review-badge ${review.quality.toLowerCase().replace(/\s+/g, "-")} severity-${review.severity.toLowerCase()}`;
   els.closeReviewBody.innerHTML = `
-    <div class="review-score">
-      <div><span>Score</span><strong>${review.score}</strong></div>
-      <div><span>Verification</span><strong>${review.verification}</strong></div>
-      <div><span>Readiness</span><strong>${review.readinessLabel}</strong></div>
-      <div><span>Follow-up</span><strong>${review.followUpGenerated ? "Queued later" : "None"}</strong></div>
+    <div class="review-verdict">
+      <div class="review-score-big"><span>Score</span><strong>${review.score}</strong></div>
+      <div class="debrief-line lesson">
+        <span>Lesson</span>
+        <p>${review.lesson}</p>
+      </div>
     </div>
-    <dl class="review-grid">
-      <dt>Diagnosis</dt><dd>${review.diagnosis}</dd>
-      <dt>Category</dt><dd>${review.category}</dd>
-      <dt>Priority</dt><dd>${review.priority}</dd>
-      <dt>Troubleshooting</dt><dd>${review.troubleshooting}</dd>
-      <dt>Final Action</dt><dd>${review.finalAction}</dd>
-    </dl>
     <h3>Assessment</h3>
-    <ul class="review-list">
-      ${review.reasons.map((reason) => `<li>${reason}</li>`).join("")}
+    <ul class="review-list assessment">
+      ${review.reasons.map((reason) => `<li class="${isMissReason(reason) ? "miss" : "hit"}">${reason}</li>`).join("")}
     </ul>
-    <div class="debrief-line">
-      <span>Lesson</span>
-      <p>${review.lesson}</p>
-    </div>
     ${review.readinessWarnings.length ? `
       <h3>Warnings Seen Before Close</h3>
       <ul class="review-list">
         ${review.readinessWarnings.map((warning) => `<li>${warning}</li>`).join("")}
       </ul>
     ` : ""}
-    <h3>Audit Trail</h3>
-    <ol class="audit-list">
-      ${review.audit.map((entry) => `<li><span>${formatTime(entry.minute)}</span><strong>${entry.title}</strong><p>${entry.text}</p></li>`).join("")}
-    </ol>
+    <div class="review-score">
+      <div><span>Final Action</span><strong>${review.finalAction}</strong></div>
+      <div><span>Verification</span><strong>${review.verification}</strong></div>
+      <div><span>Readiness</span><strong>${review.readinessLabel}</strong></div>
+      <div><span>Follow-up</span><strong>${review.followUpGenerated ? "Queued later" : "None"}</strong></div>
+    </div>
+    <details class="review-more">
+      <summary>Your decisions</summary>
+      <dl class="review-grid">
+        <dt>Diagnosis</dt><dd>${review.diagnosis}</dd>
+        <dt>Category</dt><dd>${review.category}</dd>
+        <dt>Priority</dt><dd>${review.priority}</dd>
+        <dt>Troubleshooting</dt><dd>${review.troubleshooting}</dd>
+        <dt>Final Action</dt><dd>${review.finalAction}</dd>
+      </dl>
+    </details>
+    <details class="review-more">
+      <summary>Audit trail (${review.audit.length})</summary>
+      <ol class="audit-list">
+        ${review.audit.map((entry) => `<li><span>${formatTime(entry.minute)}</span><strong>${entry.title}</strong><p>${entry.text}</p></li>`).join("")}
+      </ol>
+    </details>
   `;
   openModal(els.closeReviewModal, els.ackCloseReview);
 }
@@ -2148,21 +2172,17 @@ function showSummary() {
   const worst = reviews.filter((item) => item.quality !== "Clean").sort((a, b) => a.score - b.score)[0];
 
   els.summaryBody.innerHTML = `
-    <p><strong>${gradeLabel(avg)}</strong> with a shift health score of ${avg}.</p>
-    <p class="shift-seed">Scenario ${state.shiftSeed} | ${modifier.label}</p>
-    <ul class="summary-list">
-      <li>${resolved} of ${shiftCases.length} incidents that arrived during the shift resolved.</li>
-      <li>${clean} clean closes, ${risky} risky closes, ${incomplete} incomplete closes, ${policy} policy violations.</li>
-      <li>${slaBreaches} SLA breach${slaBreaches === 1 ? "" : "es"} from tickets left waiting past their response target.</li>
-      <li>${postponed} ticket${postponed === 1 ? "" : "s"} postponed${stillHeld ? `, ${stillHeld} still on hold when the shift ended` : ""}.</li>
-      <li>${followUps} follow-up tickets generated and ${major} major consequence${major === 1 ? "" : "s"} recorded.</li>
-      <li>${warningsAcknowledged} pre-close warning${warningsAcknowledged === 1 ? "" : "s"} acknowledged and ${policyWarningsAvoided} policy warning${policyWarningsAvoided === 1 ? "" : "s"} avoided.</li>
-      <li>${riskyFollowUps} follow-up ticket${riskyFollowUps === 1 ? "" : "s"} came from risky or policy-violating closes.</li>
-      <li>Most repeated risk pattern: ${repeatedPattern ? `${repeatedPattern.label} across ${repeatedPattern.count} incidents` : "No repeated pattern detected"}.</li>
-      <li>Best triage call: ${best ? `${best.title} (${best.score})` : "None yet"}.</li>
-      <li>Most expensive mistake: ${worst ? `${worst.title} (${worst.quality}, ${worst.severity})` : "None"}.</li>
-      <li>Security ${state.metrics.security}, SLA ${state.metrics.sla}, Trust ${state.metrics.trust}, Budget ${state.metrics.budget}.</li>
-    </ul>
+    <div class="summary-hero ${avg >= 70 ? "good" : avg >= 52 ? "warn" : "bad"}">
+      <span>Shift grade</span>
+      <strong>${gradeLabel(avg)}</strong>
+      <p>Shift health ${avg} | Scenario ${state.shiftSeed} | ${modifier.label}</p>
+    </div>
+    <div class="summary-kpis">
+      <div><span>Resolved</span><strong>${resolved}/${shiftCases.length}</strong></div>
+      <div><span>Clean closes</span><strong>${clean}</strong></div>
+      <div class="${slaBreaches ? "warn" : ""}"><span>SLA breaches</span><strong>${slaBreaches}</strong></div>
+      <div class="${policy ? "bad" : ""}"><span>Policy violations</span><strong>${policy}</strong></div>
+    </div>
     <div class="skill-grid">
       ${skills.map((skill) => `
         <div>
@@ -2179,6 +2199,22 @@ function showSummary() {
       <span>Weak Spot</span>
       <p>${narrative.weakness}</p>
     </div>
+    <details class="review-more">
+      <summary>Shift details</summary>
+      <ul class="summary-list">
+        <li>${resolved} of ${shiftCases.length} incidents that arrived during the shift resolved.</li>
+        <li>${clean} clean closes, ${risky} risky closes, ${incomplete} incomplete closes, ${policy} policy violations.</li>
+        <li>${slaBreaches} SLA breach${slaBreaches === 1 ? "" : "es"} from tickets left waiting past their response target.</li>
+        <li>${postponed} ticket${postponed === 1 ? "" : "s"} postponed${stillHeld ? `, ${stillHeld} still on hold when the shift ended` : ""}.</li>
+        <li>${followUps} follow-up tickets generated and ${major} major consequence${major === 1 ? "" : "s"} recorded.</li>
+        <li>${warningsAcknowledged} pre-close warning${warningsAcknowledged === 1 ? "" : "s"} acknowledged and ${policyWarningsAvoided} policy warning${policyWarningsAvoided === 1 ? "" : "s"} avoided.</li>
+        <li>${riskyFollowUps} follow-up ticket${riskyFollowUps === 1 ? "" : "s"} came from risky or policy-violating closes.</li>
+        <li>Most repeated risk pattern: ${repeatedPattern ? `${repeatedPattern.label} across ${repeatedPattern.count} incidents` : "No repeated pattern detected"}.</li>
+        <li>Best triage call: ${best ? `${best.title} (${best.score})` : "None yet"}.</li>
+        <li>Most expensive mistake: ${worst ? `${worst.title} (${worst.quality}, ${worst.severity})` : "None"}.</li>
+        <li>Security ${state.metrics.security}, SLA ${state.metrics.sla}, Trust ${state.metrics.trust}, Budget ${state.metrics.budget}.</li>
+      </ul>
+    </details>
     <h3>Replay Modifiers</h3>
     <div class="modifier-grid">
       ${replayOptions.map((option) => `
@@ -2189,7 +2225,6 @@ function showSummary() {
         </button>
       `).join("")}
     </div>
-    <p>Audit trails and consequence reviews are now part of the shift record.</p>
   `;
   openModal(els.summaryModal, els.restartGame);
 }
@@ -2210,6 +2245,7 @@ function render() {
 
   els.clock.textContent = formatTime(state.time);
   els.closedCount.textContent = available.length - open.length;
+  els.mobileQueueCount.textContent = open.length ? String(open.length) : "";
   els.openCount.textContent = open.length;
 
   renderShiftControl(available);
@@ -2380,6 +2416,7 @@ function renderQueue(items) {
     button.addEventListener("click", () => {
       state.selectedId = button.dataset.select;
       syncSelectionFromCase(selectedCase());
+      setMobileView("ticket");
       render();
     });
   });
@@ -2688,6 +2725,12 @@ els.ackCloseReview.addEventListener("click", hideCloseReview);
 els.cancelCloseWarning.addEventListener("click", hideCloseWarning);
 els.confirmCloseWarning.addEventListener("click", confirmCloseWarning);
 document.addEventListener("keydown", handleModalKeys);
+document.querySelectorAll(".mobile-tabs [data-view]").forEach((button) => {
+  button.addEventListener("click", () => {
+    setMobileView(button.dataset.view);
+    window.scrollTo({ top: 0 });
+  });
+});
 const topbar = document.querySelector(".topbar");
 const actionBar = document.querySelector(".next-action-bar");
 new ResizeObserver(() => {
