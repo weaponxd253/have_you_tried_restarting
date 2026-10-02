@@ -9,10 +9,12 @@ The player works a live shift where tickets, phone calls, chat messages, monitor
 3. Ask questions or run diagnostic tools.
 4. Assign priority and category.
 5. Choose troubleshooting steps.
-6. Resolve, escalate, dispatch, deny, or postpone.
+6. Resolve, escalate, dispatch, deny, close it as monitored, or postpone it.
 7. Receive consequences and follow-up tickets.
 
 Each choice spends shift time, consumes limited resources, and affects trust, security posture, SLA health, and budget.
+
+The shift ends automatically at 12:00. Every open ticket has a response target based on its SLA risk (Critical 30m, Rising 60m, Low 90m); letting it wait past that target costs SLA health and user trust. Extra troubleshooting steps that do not address the cause are marked down in the close review. Postponing puts a ticket on hold for 30 minutes (once per ticket): it stays open, its SLA clock pauses, and it returns to the queue on its own or when resumed. Each postpone costs a little user trust, and parking Critical or security-sensitive work costs SLA and security posture too. Classification unlocks after the first investigation step, and a correct diagnosis or priority only earns full credit when the gathered evidence backs it (diagnostics or follow-up questions for diagnosis, records or diagnostics for priority).
 
 The current layout emphasizes the active ticket stage, with classification visible above the fold, compact channel pressure, and follow-up work returning to the live queue.
 
@@ -28,6 +30,6 @@ Decision-readiness features include close-readiness chips, final-action risk hin
 
 Shift-memory features include compact case memory, tagged supervisor feed events, clearer follow-up provenance, queue-level pattern hints, consequence reason lines, and a final summary that reports warnings, risky follow-ups, and repeated risk patterns.
 
-Learning and replay features include one-line supervisor debrief lessons, derived skill tracking, end-of-shift strengths and weak spots, deterministic shift seeds, and replay modifiers for security-heavy, outage-heavy, or lean-staffing shifts.
+Learning and replay features include one-line supervisor debrief lessons, derived skill tracking, end-of-shift strengths and weak spots, and replay modifiers for security-heavy, outage-heavy, or lean-staffing shifts. Every shift is a fixed, repeatable scenario identified by a scenario code; there is no randomness.
 
 Open `index.html` in a browser to play the current prototype.

@@ -1,5 +1,13 @@
 const START_MINUTE = 8 * 60;
 const SHIFT_END_MINUTE = 12 * 60;
+const SHIFT_WARNING_MINUTE = SHIFT_END_MINUTE - 30;
+const SLA_TARGET_MINUTES = { Critical: 30, Rising: 60, Low: 90 };
+const NEUTRAL_TROUBLESHOOTING = ["document_notes"];
+const EXTRA_STEP_PENALTY = 5;
+const DIAGNOSIS_EVIDENCE = ["diagnostics", "question"];
+const PRIORITY_EVIDENCE = ["records", "diagnostics"];
+const HOLD_MINUTES = 30;
+const HOLD_LOG_COST = 2;
 
 const priorities = ["P1", "P2", "P3", "P4"];
 
@@ -43,7 +51,7 @@ const resolutionOptions = [
   { id: "apps", label: "Escalate Apps", cost: 5, resource: "apps", note: "Route SaaS or business app issues." },
   { id: "dispatch", label: "Dispatch Tech", cost: 10, resource: "field", note: "Send limited on-site help." },
   { id: "deny", label: "Deny Request", cost: 4, resource: null, note: "Refuse unsafe or unauthorized work." },
-  { id: "monitor", label: "Monitor", cost: 4, resource: null, note: "Park it and watch for correlation." }
+  { id: "monitor", label: "Monitor", cost: 4, resource: null, note: "Close as watched; reopen only if it recurs." }
 ];
 
 const patternTagLabels = {
@@ -513,6 +521,8 @@ const initialState = {
   scheduled: [],
   reviews: [],
   seenPatterns: [],
+  shiftWarned: false,
+  shiftEnded: false,
   cases: cases.map((item) => ({
     ...item,
     baseArrival: item.arrival,
@@ -584,6 +594,8 @@ const els = {
   actionHint: document.querySelector("#actionHint"),
   troubleshootHelper: document.querySelector("#troubleshootHelper"),
   resolutionHelper: document.querySelector("#resolutionHelper"),
+  holdButton: document.querySelector("#holdButton"),
+  holdHelper: document.querySelector("#holdHelper"),
   advanceTime: document.querySelector("#advanceTime"),
   endShift: document.querySelector("#endShift"),
   summaryModal: document.querySelector("#summaryModal"),
@@ -602,6 +614,63 @@ const els = {
   confirmCloseWarning: document.querySelector("#confirmCloseWarning")
 };
 
+let modalReturnFocus = null;
+
+function openModal(modal, initialFocus) {
+  if (modal.classList.contains("hidden") && !topModal()) {
+    modalReturnFocus = document.activeElement;
+  }
+  modal.classList.remove("hidden");
+  initialFocus?.focus();
+}
+
+function closeModal(modal) {
+  if (modal.classList.contains("hidden")) return;
+  modal.classList.add("hidden");
+  const next = topModal();
+  if (next) {
+    focusableIn(next)[0]?.focus();
+  } else {
+    // The control that opened the modal may have been re-rendered away; fall back to the next-action prompt.
+    const target = modalReturnFocus && modalReturnFocus !== document.body && document.contains(modalReturnFocus) ? modalReturnFocus : els.nextActionButton;
+    target.focus({ preventScroll: true });
+    modalReturnFocus = null;
+  }
+}
+
+function topModal() {
+  return [...document.querySelectorAll(".modal-backdrop:not(.hidden)")].pop() || null;
+}
+
+function focusableIn(container) {
+  return [...container.querySelectorAll("button:not([disabled]), [href], [tabindex]:not([tabindex='-1'])")];
+}
+
+function handleModalKeys(event) {
+  const modal = topModal();
+  if (!modal) return;
+  if (event.key === "Escape") {
+    if (modal === els.closeReviewModal) hideCloseReview();
+    if (modal === els.closeWarningModal) hideCloseWarning();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = focusableIn(modal);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!modal.contains(document.activeElement)) {
+    event.preventDefault();
+    first.focus();
+  } else if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function cloneState(source) {
   return JSON.parse(JSON.stringify(source));
 }
@@ -612,7 +681,7 @@ function modifierById(modifierId) {
 
 function modifierArrivalOffset(caseItem, modifier) {
   const caseOffset = modifier.arrivalOffsetsByCase?.[caseItem.id] || 0;
-  const tagOffset = (caseItem.ruleTags || []).reduce((sum, tag) => sum + (modifier.arrivalOffsetsByTag?.[tag] || 0), 0);
+  const tagOffset = Math.min(0, ...(caseItem.ruleTags || []).map((tag) => modifier.arrivalOffsetsByTag?.[tag] || 0));
   return caseOffset + tagOffset;
 }
 
@@ -677,6 +746,22 @@ function evidenceTotal(item) {
   return item ? item.evidence.length + Object.keys(item.reveals).length : 0;
 }
 
+function hasEvidence(item, actionIds) {
+  return Boolean(item) && actionIds.some((actionId) => item.revealed.includes(actionId));
+}
+
+function workable(item) {
+  return Boolean(item) && item.status !== "resolved" && !item.onHold;
+}
+
+function needsNewSelection() {
+  return !workable(selectedCase());
+}
+
+function classificationUnlocked(item) {
+  return workable(item) && item.revealed.length > 1;
+}
+
 function requirementItems(item) {
   return [
     { id: "verify", label: "Identity", done: Boolean(item && item.revealed.includes("verify")) },
@@ -720,10 +805,16 @@ function strongestRuleFor(item) {
   return relevantRulesFor(item)[0] || null;
 }
 
+function acceptedResolutionsFor(caseItem) {
+  return caseItem ? [caseItem.correctResolution, ...(caseItem.acceptAlso || [])] : [];
+}
+
 function violatedRulesFor(caseItem) {
   if (!caseItem) return [];
   const itemTags = new Set(caseItem.ruleTags || []);
   const unsafeAccessAction = ["reset_access", "remote_fix", "dispatch"].includes(caseItem.resolution);
+  // Follow-ups inherit the original's rule tags, so a resolution the case itself accepts never breaks a routing rule.
+  const acceptedResolution = acceptedResolutionsFor(caseItem).includes(caseItem.resolution);
 
   return relevantRulesFor(caseItem).filter((rule) => {
     if (rule.id === "mfa-callback") {
@@ -733,10 +824,10 @@ function violatedRulesFor(caseItem) {
       return caseItem.correctPriority === "P1" && caseItem.priority !== "P1";
     }
     if (rule.id === "finance-restricted") {
-      return itemTags.has("finance") && !["deny", "security"].includes(caseItem.resolution);
+      return itemTags.has("finance") && !acceptedResolution && !["deny", "security"].includes(caseItem.resolution);
     }
     if (rule.id === "correlation") {
-      return itemTags.has("correlation") && !["apps", "network", "monitor"].includes(caseItem.resolution);
+      return itemTags.has("correlation") && !acceptedResolution && !["apps", "network", "monitor"].includes(caseItem.resolution);
     }
     return false;
   });
@@ -776,7 +867,9 @@ function actionFitsSelectedCategory(item, option) {
     hardware: ["dispatch", "remote_fix"],
     asset: ["dispatch", "remote_fix", "monitor"]
   };
-  return (fitByCategory[item.category] || []).includes(option.id);
+  if ((fitByCategory[item.category] || []).includes(option.id)) return true;
+  // Some incidents route outside the generic table (e.g. an identity outage owned by Apps), so honor the case's own accepted routes.
+  return item.category === item.correctCategory && acceptedResolutionsFor(item).includes(option.id);
 }
 
 function closeReadinessFor(item, resolutionId = null) {
@@ -809,10 +902,14 @@ function closeReadinessFor(item, resolutionId = null) {
   if (!troubleshootingChosen) {
     warnings.push({ kind: "incomplete", text: "No troubleshooting step has been chosen.", confirm: false });
   }
-  if (draft.revealed.length === 1) {
-    warnings.push({ kind: "risky", text: "No investigation beyond the initial report.", confirm: Boolean(resolutionId) });
-  } else if (!evidenceReady) {
+  if (!evidenceReady) {
     warnings.push({ kind: "caution", text: "Evidence is still thin before close.", confirm: false });
+  }
+  if (draft.diagnosis && !hasEvidence(draft, DIAGNOSIS_EVIDENCE)) {
+    warnings.push({ kind: "caution", text: "Diagnosis is not backed by diagnostics or follow-up evidence yet.", confirm: false });
+  }
+  if (draft.priority && !hasEvidence(draft, PRIORITY_EVIDENCE)) {
+    warnings.push({ kind: "caution", text: "Priority is not backed by records or diagnostics yet.", confirm: false });
   }
   if (draft.securityRisk && !verified) {
     warnings.push({ kind: "policy", text: "Security-sensitive ticket lacks identity verification.", confirm: Boolean(resolutionId) });
@@ -866,9 +963,16 @@ function closeReadinessFor(item, resolutionId = null) {
   };
 }
 
+function resourceExhausted(option) {
+  return Boolean(option.resource) && state.resources[option.resource].remaining <= 0;
+}
+
 function finalActionHintFor(item, option, disabled) {
   if (disabled || !item) {
     return { tone: "muted", text: "Locked until classification and troubleshooting are complete." };
+  }
+  if (resourceExhausted(option)) {
+    return { tone: "muted", text: `No ${state.resources[option.resource].label.toLowerCase()} left this shift.` };
   }
 
   const readiness = closeReadinessFor(item, option.id);
@@ -1011,7 +1115,7 @@ function skillBreakdownForReviews(reviews) {
     {
       id: "evidence",
       label: "Evidence depth",
-      score: pct(reviews.filter((review) => review.checks.investigated).length, total),
+      score: pct(reviews.filter((review) => review.checks.diagnosisSupported && review.checks.prioritySupported).length, total),
       strength: "Built a useful record before closing.",
       weakness: "Some closes relied too heavily on the initial report."
     },
@@ -1111,7 +1215,111 @@ function advance(minutes) {
   state.time += minutes;
   unlockArrivals();
   processScheduled();
+  releaseHolds();
+  checkSlaBreaches();
+  announceShiftWarning();
   render();
+  if (state.time >= SHIFT_END_MINUTE && !state.shiftEnded) {
+    addFeed("Shift over", `The clock hit ${formatTime(SHIFT_END_MINUTE)}. Remaining work rolls to the next analyst.`, "neutral", state.time, null, ["Shift"]);
+    endShift();
+  }
+}
+
+function slaDueMinute(item) {
+  const heldMinutes = (item.holdMinutes || 0) + (item.onHold ? state.time - item.holdStart : 0);
+  return item.arrival + (SLA_TARGET_MINUTES[item.risk?.sla] || SLA_TARGET_MINUTES.Low) + heldMinutes;
+}
+
+function checkSlaBreaches() {
+  openCases().forEach((item) => {
+    if (item.onHold) return;
+    const due = slaDueMinute(item);
+    if (item.slaBreached || state.time < due) return;
+    item.slaBreached = true;
+    changeMetric("sla", -4);
+    changeMetric("trust", -2);
+    addAudit(item, "SLA breached", `${item.risk.sla} response target missed at ${formatTime(due)}.`, due);
+    addFeed("SLA breach", `${item.title} waited past its ${item.risk.sla.toLowerCase()} response target.`, "bad", due, null, ["SLA"]);
+  });
+}
+
+function holdCostFor(item) {
+  const costs = { trust: -1 };
+  if (item.risk?.sla === "Critical") {
+    costs.trust -= 2;
+    costs.sla = -3;
+  }
+  if (item.securityRisk) {
+    costs.security = -3;
+  }
+  return costs;
+}
+
+function describeHoldCost(costs) {
+  const labels = { trust: "trust", sla: "SLA", security: "security posture" };
+  return Object.entries(costs).map(([metric, amount]) => `${-amount} ${labels[metric]}`).join(", ");
+}
+
+function postponeCurrent() {
+  const current = selectedCase();
+  if (!workable(current) || current.holdUsed) return;
+  const costs = holdCostFor(current);
+  const costly = Boolean(costs.sla || costs.security);
+  current.onHold = true;
+  current.holdUsed = true;
+  current.holdStart = state.time;
+  current.holdUntil = state.time + HOLD_MINUTES;
+  Object.entries(costs).forEach(([metric, amount]) => changeMetric(metric, amount));
+  addAudit(current, "Postponed", `On hold until ${formatTime(current.holdUntil)}. Cost: ${describeHoldCost(costs)}.`);
+  addFeed(
+    "Ticket postponed",
+    `${current.title} is on hold until ${formatTime(current.holdUntil)}; its SLA clock is paused.${costly ? " Parking critical or security-sensitive work cost extra." : ""}`,
+    costly ? "bad" : "neutral",
+    state.time,
+    null,
+    ["Hold"]
+  );
+  const next = openCases().find(workable);
+  if (next) {
+    state.selectedId = next.id;
+    syncSelectionFromCase(next);
+  }
+  advance(HOLD_LOG_COST);
+}
+
+function resumeCase(item, early) {
+  const endedAt = Math.min(state.time, item.holdUntil);
+  item.holdMinutes = (item.holdMinutes || 0) + (endedAt - item.holdStart);
+  item.onHold = false;
+  addAudit(item, early ? "Resumed early" : "Back from hold", `Held for ${endedAt - item.holdStart}m.`, endedAt);
+  if (!early) {
+    addFeed("Back from hold", `${item.title} returned to the live queue.`, "neutral", endedAt, null, ["Hold"]);
+  }
+}
+
+function resumeCurrent() {
+  const current = selectedCase();
+  if (!current?.onHold) return;
+  resumeCase(current, true);
+  render();
+}
+
+function releaseHolds() {
+  state.cases
+    .filter((item) => item.onHold && item.holdUntil <= state.time)
+    .forEach((item) => {
+      resumeCase(item, false);
+      if (needsNewSelection()) {
+        state.selectedId = item.id;
+        syncSelectionFromCase(item);
+      }
+    });
+}
+
+function announceShiftWarning() {
+  if (state.shiftWarned || state.time < SHIFT_WARNING_MINUTE || state.time >= SHIFT_END_MINUTE) return;
+  state.shiftWarned = true;
+  addFeed("30 minutes left", `The shift ends at ${formatTime(SHIFT_END_MINUTE)}. Open work will roll over with an SLA penalty.`, "neutral", state.time, null, ["Shift"]);
 }
 
 function unlockArrivals() {
@@ -1121,7 +1329,7 @@ function unlockArrivals() {
       item.status = "new";
       newArrival = true;
       addFeed("New " + item.channel.toLowerCase(), item.title, "neutral", item.arrival, null, ["New"]);
-      if (!state.selectedId) {
+      if (needsNewSelection()) {
         state.selectedId = item.id;
         syncSelectionFromCase(item);
       }
@@ -1140,7 +1348,7 @@ function processScheduled() {
       const hadOpenWork = openCases().length > 0;
       state.cases.push(item.followUp);
       item.followUp.status = "new";
-      if (!hadOpenWork || !state.selectedId) {
+      if (!hadOpenWork || needsNewSelection()) {
         state.selectedId = item.followUp.id;
         syncSelectionFromCase(item.followUp);
       }
@@ -1164,6 +1372,15 @@ function currentStage(item) {
       title: "Start Shift",
       hint: "Queue idle.",
       missing: ["Start shift"]
+    };
+  }
+
+  if (item.onHold) {
+    return {
+      id: "hold",
+      title: "On Hold",
+      hint: `Back in the queue at ${formatTime(item.holdUntil)}. SLA clock paused.`,
+      missing: []
     };
   }
 
@@ -1234,6 +1451,15 @@ function nextActionFor(item) {
     };
   }
 
+  if (stage.id === "hold") {
+    return {
+      title: "Ticket On Hold",
+      hint: "Work other tickets while this one waits, or resume it now.",
+      label: "Resume Now",
+      target: "resume"
+    };
+  }
+
   if (stage.id === "investigate") {
     return {
       title: "Gather Evidence",
@@ -1292,6 +1518,10 @@ function jumpToTarget(target) {
     resolution: els.resolutionSection,
     feed: els.feed
   };
+  if (target === "resume") {
+    resumeCurrent();
+    return;
+  }
   const node = targetMap[target] || els.classificationPanel;
   if (target === "queue" && !availableCases().length && futureCases().length) {
     const nextArrival = Math.min(...futureCases().map((item) => item.arrival));
@@ -1305,7 +1535,7 @@ function jumpToTarget(target) {
 }
 
 function reveal(caseItem, actionId) {
-  if (!caseItem || caseItem.status === "resolved" || caseItem.revealed.includes(actionId)) {
+  if (!workable(caseItem) || caseItem.revealed.includes(actionId)) {
     return;
   }
   caseItem.revealed.push(actionId);
@@ -1319,6 +1549,7 @@ function reveal(caseItem, actionId) {
 
 function choosePriority(priority) {
   const current = selectedCase();
+  if (!classificationUnlocked(current)) return;
   state.selectedPriority = priority;
   if (current && current.status !== "resolved") {
     current.priority = priority;
@@ -1329,6 +1560,7 @@ function choosePriority(priority) {
 
 function chooseDiagnosis(diagnosis) {
   const current = selectedCase();
+  if (!classificationUnlocked(current)) return;
   state.selectedDiagnosis = diagnosis;
   if (current && current.status !== "resolved") {
     current.diagnosis = diagnosis;
@@ -1339,6 +1571,7 @@ function chooseDiagnosis(diagnosis) {
 
 function chooseCategory(category) {
   const current = selectedCase();
+  if (!classificationUnlocked(current)) return;
   state.selectedCategory = category;
   if (current && current.status !== "resolved") {
     current.category = category;
@@ -1349,7 +1582,7 @@ function chooseCategory(category) {
 
 function toggleTroubleshooting(stepId) {
   const current = selectedCase();
-  if (!current || current.status === "resolved") {
+  if (!workable(current)) {
     return;
   }
 
@@ -1367,6 +1600,14 @@ function toggleTroubleshooting(stepId) {
   selected.add(stepId);
   state.selectedTroubleshooting = [...selected];
   current.troubleshooting = [...selected];
+  // Time already spent on a step is not refunded on removal, so re-adding it is free.
+  current.troubleshootingPerformed = current.troubleshootingPerformed || [];
+  if (current.troubleshootingPerformed.includes(stepId)) {
+    addAudit(current, "Troubleshooting reselected", step.label);
+    render();
+    return;
+  }
+  current.troubleshootingPerformed.push(stepId);
   addAudit(current, "Troubleshooting selected", step.label);
   addFeed("Troubleshooting", `${current.title}: ${step.label}.`, "neutral");
   advance(step.cost);
@@ -1374,13 +1615,12 @@ function toggleTroubleshooting(stepId) {
 
 function requestResolve(resolutionId) {
   const current = selectedCase();
-  if (!current || current.status === "resolved") {
+  if (!workable(current)) {
     return;
   }
 
   const option = resolutionOptions.find((item) => item.id === resolutionId);
-  if (option.resource && state.resources[option.resource].remaining <= 0) {
-    resolveCurrent(resolutionId);
+  if (resourceExhausted(option)) {
     return;
   }
 
@@ -1395,15 +1635,12 @@ function requestResolve(resolutionId) {
 
 function resolveCurrent(resolutionId, readinessSnapshot = null) {
   const current = selectedCase();
-  if (!current || current.status === "resolved") {
+  if (!workable(current)) {
     return;
   }
 
   const option = resolutionOptions.find((item) => item.id === resolutionId);
-  if (option.resource && state.resources[option.resource].remaining <= 0) {
-    addFeed("Resource unavailable", `${state.resources[option.resource].label} are already committed. Pick another path or wait.`, "bad");
-    changeMetric("sla", -3);
-    render();
+  if (resourceExhausted(option)) {
     return;
   }
 
@@ -1429,8 +1666,9 @@ function resolveCurrent(resolutionId, readinessSnapshot = null) {
   state.reviews.unshift(current.review);
   applyResolutionConsequences(current, option, current.evaluation);
   advance(option.cost);
+  if (state.shiftEnded) return;
 
-  const next = openCases()[0];
+  const next = openCases().find(workable) || openCases()[0];
   state.selectedId = next ? next.id : current.id;
   state.selectedDiagnosis = next ? next.diagnosis : current.diagnosis;
   state.selectedCategory = next ? next.category : current.category;
@@ -1444,18 +1682,24 @@ function evaluateCase(caseItem) {
   const resolutionCorrect = caseItem.correctResolution === caseItem.resolution || caseItem.acceptAlso.includes(caseItem.resolution);
   const diagnosisCorrect = caseItem.correctDiagnosis === caseItem.diagnosis;
   const categoryCorrect = caseItem.correctCategory === caseItem.category;
-  const troubleshootingCorrect = caseItem.correctTroubleshooting.some((step) => caseItem.troubleshooting.includes(step));
+  const troubleshootingHit = caseItem.correctTroubleshooting.some((step) => caseItem.troubleshooting.includes(step));
+  const extraTroubleshooting = caseItem.troubleshooting.filter((step) => (
+    !caseItem.correctTroubleshooting.includes(step) && !NEUTRAL_TROUBLESHOOTING.includes(step)
+  )).length;
+  const troubleshootingCorrect = troubleshootingHit && extraTroubleshooting === 0;
   const priorityCorrect = caseItem.correctPriority === caseItem.priority;
   const verified = caseItem.revealed.includes("verify");
   const investigated = caseItem.revealed.includes("diagnostics") || caseItem.revealed.includes("records") || caseItem.revealed.includes("question");
+  const diagnosisSupported = hasEvidence(caseItem, DIAGNOSIS_EVIDENCE);
+  const prioritySupported = hasEvidence(caseItem, PRIORITY_EVIDENCE);
   const violatedRules = violatedRulesFor(caseItem);
   let score = 0;
 
-  if (diagnosisCorrect) score += 15;
+  if (diagnosisCorrect) score += diagnosisSupported ? 15 : 5;
   if (categoryCorrect) score += 15;
-  if (troubleshootingCorrect) score += 20;
+  if (troubleshootingHit) score += Math.max(0, 20 - extraTroubleshooting * EXTRA_STEP_PENALTY);
   if (resolutionCorrect) score += 25;
-  if (priorityCorrect) score += 15;
+  if (priorityCorrect) score += prioritySupported ? 15 : 5;
   if (verified) score += 5;
   if (investigated) score += 5;
 
@@ -1463,7 +1707,7 @@ function evaluateCase(caseItem) {
     score -= 25;
   }
 
-  if (caseItem.securityRisk && !troubleshootingCorrect && caseItem.resolution !== "deny") {
+  if (caseItem.securityRisk && !troubleshootingHit && caseItem.resolution !== "deny") {
     score -= 10;
   }
 
@@ -1479,13 +1723,16 @@ function evaluateCase(caseItem) {
   const policyViolation = violatedRules.length > 0 || unsafeAccessViolation || restrictedDataViolation;
 
   const reasons = [];
-  if (diagnosisCorrect) reasons.push("Diagnosis matched the evidence.");
+  if (diagnosisCorrect && diagnosisSupported) reasons.push("Diagnosis matched the evidence.");
+  else if (diagnosisCorrect) reasons.push("Diagnosis was right, but no diagnostics or follow-up evidence backed it.");
   else reasons.push("Diagnosis did not match the evidence.");
   if (categoryCorrect) reasons.push("Category routed to the right owner.");
   else reasons.push("Category would route to the wrong owner.");
-  if (priorityCorrect) reasons.push("Priority matched the incident impact.");
+  if (priorityCorrect && prioritySupported) reasons.push("Priority matched the incident impact.");
+  else if (priorityCorrect) reasons.push("Priority was right, but no records or diagnostics backed the impact call.");
   else reasons.push(`Priority should have been ${caseItem.correctPriority}.`);
   if (troubleshootingCorrect) reasons.push("Troubleshooting step addressed the likely cause.");
+  else if (troubleshootingHit) reasons.push(`Troubleshooting addressed the likely cause, but ${extraTroubleshooting} unnecessary step${extraTroubleshooting === 1 ? "" : "s"} muddied the record.`);
   else reasons.push("Troubleshooting step did not address the likely cause.");
   if (verified) reasons.push("Identity/risk verification was documented.");
   else if (caseItem.securityRisk) reasons.push("Security-sensitive request closed without identity verification.");
@@ -1521,18 +1768,17 @@ function evaluateCase(caseItem) {
       diagnosisCorrect,
       categoryCorrect,
       troubleshootingCorrect,
+      extraTroubleshooting,
       resolutionCorrect,
       priorityCorrect,
       verified,
       investigated,
+      diagnosisSupported,
+      prioritySupported,
       policyViolation,
       violatedRules: violatedRules.map((rule) => rule.id)
     }
   };
-}
-
-function scoreCase(caseItem) {
-  return evaluateCase(caseItem).score;
 }
 
 function makeCloseReview(caseItem, option) {
@@ -1601,11 +1847,11 @@ function showCloseReview(review) {
       ${review.audit.map((entry) => `<li><span>${formatTime(entry.minute)}</span><strong>${entry.title}</strong><p>${entry.text}</p></li>`).join("")}
     </ol>
   `;
-  els.closeReviewModal.classList.remove("hidden");
+  openModal(els.closeReviewModal, els.ackCloseReview);
 }
 
 function hideCloseReview() {
-  els.closeReviewModal.classList.add("hidden");
+  closeModal(els.closeReviewModal);
 }
 
 function showCloseWarning(resolutionId, readiness) {
@@ -1620,12 +1866,12 @@ function showCloseWarning(resolutionId, readiness) {
       ${readiness.confirmationWarnings.map((warning) => `<li>${warning.text}</li>`).join("")}
     </ul>
   `;
-  els.closeWarningModal.classList.remove("hidden");
+  openModal(els.closeWarningModal, els.cancelCloseWarning);
 }
 
 function hideCloseWarning() {
   pendingResolutionId = null;
-  els.closeWarningModal.classList.add("hidden");
+  closeModal(els.closeWarningModal);
 }
 
 function confirmCloseWarning() {
@@ -1841,6 +2087,12 @@ function applyResolutionConsequences(caseItem, option, evaluation) {
 function endShift() {
   hideCloseWarning();
   hideCloseReview();
+  if (state.shiftEnded) {
+    showSummary();
+    return;
+  }
+  state.shiftEnded = true;
+  state.shiftEndMinute = state.time;
   const unresolved = openCases().length;
   if (unresolved > 0) {
     changeMetric("sla", -unresolved * 5);
@@ -1851,6 +2103,7 @@ function endShift() {
     state.time = Math.max(state.time, nextMinute);
     processScheduled();
   }
+  render();
   showSummary();
 }
 
@@ -1864,7 +2117,9 @@ function gradeLabel(score) {
 function showSummary() {
   const avg = Math.round(Object.values(state.metrics).reduce((sum, value) => sum + value, 0) / 4);
   const modifier = modifierById(state.activeModifier);
-  const resolved = state.cases.filter((item) => item.status === "resolved").length;
+  const shiftEndMinute = state.shiftEndMinute ?? state.time;
+  const shiftCases = state.cases.filter((item) => item.arrival <= shiftEndMinute);
+  const resolved = shiftCases.filter((item) => item.status === "resolved").length;
   const reviews = state.reviews;
   const clean = reviews.filter((item) => item.quality === "Clean").length;
   const risky = reviews.filter((item) => item.quality === "Risky").length;
@@ -1875,7 +2130,10 @@ function showSummary() {
   const riskyFollowUps = state.cases.filter((item) => item.isFollowUp && item.origin?.quality !== "Clean").length;
   const warningsAcknowledged = state.cases.reduce((sum, item) => sum + (item.audit || []).filter((entry) => entry.title === "Pre-close warning acknowledged").length, 0);
   const policyWarningsAvoided = reviews.filter((item) => item.quality !== "Policy Violation" && (item.readinessWarnings || []).some((warning) => warning.includes("Would violate") || warning.includes("Security-sensitive"))).length;
-  const repeatedPattern = repeatedPatternFor(state.cases.filter((item) => item.arrival <= state.time && !item.isFollowUp));
+  const slaBreaches = state.cases.filter((item) => item.slaBreached).length;
+  const postponed = shiftCases.filter((item) => item.holdUsed).length;
+  const stillHeld = shiftCases.filter((item) => item.onHold).length;
+  const repeatedPattern = repeatedPatternFor(shiftCases.filter((item) => !item.isFollowUp));
   const skills = skillBreakdownForReviews(reviews);
   const narrative = skillNarrative(skills);
   const replayOptions = shiftModifiers.filter((item) => item.id !== state.activeModifier).slice(0, 3);
@@ -1884,10 +2142,12 @@ function showSummary() {
 
   els.summaryBody.innerHTML = `
     <p><strong>${gradeLabel(avg)}</strong> with a shift health score of ${avg}.</p>
-    <p class="shift-seed">Shift seed ${state.shiftSeed} | ${modifier.label}</p>
+    <p class="shift-seed">Scenario ${state.shiftSeed} | ${modifier.label}</p>
     <ul class="summary-list">
-      <li>${resolved} of ${state.cases.length} incidents resolved.</li>
+      <li>${resolved} of ${shiftCases.length} incidents that arrived during the shift resolved.</li>
       <li>${clean} clean closes, ${risky} risky closes, ${incomplete} incomplete closes, ${policy} policy violations.</li>
+      <li>${slaBreaches} SLA breach${slaBreaches === 1 ? "" : "es"} from tickets left waiting past their response target.</li>
+      <li>${postponed} ticket${postponed === 1 ? "" : "s"} postponed${stillHeld ? `, ${stillHeld} still on hold when the shift ended` : ""}.</li>
       <li>${followUps} follow-up tickets generated and ${major} major consequence${major === 1 ? "" : "s"} recorded.</li>
       <li>${warningsAcknowledged} pre-close warning${warningsAcknowledged === 1 ? "" : "s"} acknowledged and ${policyWarningsAvoided} policy warning${policyWarningsAvoided === 1 ? "" : "s"} avoided.</li>
       <li>${riskyFollowUps} follow-up ticket${riskyFollowUps === 1 ? "" : "s"} came from risky or policy-violating closes.</li>
@@ -1918,20 +2178,20 @@ function showSummary() {
         <button data-modifier="${option.id}" class="modifier-button">
           <strong>${option.label}</strong>
           <span>${option.description}</span>
-          <small>Seed ${option.seed}</small>
+          <small>Scenario ${option.seed}</small>
         </button>
       `).join("")}
     </div>
     <p>Audit trails and consequence reviews are now part of the shift record.</p>
   `;
-  els.summaryModal.classList.remove("hidden");
+  openModal(els.summaryModal, els.restartGame);
 }
 
 function restartGame(modifierId = "standard") {
   state = buildInitialState(modifierId);
   hideCloseWarning();
   hideCloseReview();
-  els.summaryModal.classList.add("hidden");
+  closeModal(els.summaryModal);
   unlockArrivals();
   render();
 }
@@ -1960,6 +2220,28 @@ function render() {
   renderWorkflow(current);
   renderActions(current);
   renderDecision(current);
+  renderHold(current);
+}
+
+function renderHold(item) {
+  let label = "Postpone 30m";
+  let helper = "Select an open incident.";
+  let enabled = false;
+  if (item?.onHold) {
+    label = "Resume Now";
+    helper = `On hold until ${formatTime(item.holdUntil)}. Its SLA clock is paused.`;
+    enabled = true;
+  } else if (workable(item) && item.holdUsed) {
+    helper = "Already postponed once. Work it or close it.";
+  } else if (workable(item)) {
+    helper = `Parks it for ${HOLD_MINUTES}m and pauses its SLA clock. Costs ${describeHoldCost(holdCostFor(item))}. Once per ticket.`;
+    enabled = true;
+  } else if (item) {
+    helper = "Ticket already resolved.";
+  }
+  els.holdButton.textContent = label;
+  els.holdButton.disabled = !enabled;
+  els.holdHelper.textContent = helper;
 }
 
 function renderShiftControl(available) {
@@ -2066,7 +2348,7 @@ function renderWorkflow(item) {
     { id: "investigate", label: "Investigate", full: "Ask questions or run diagnostics", done: Boolean(item && item.revealed.length > 1), active: stage.id === "investigate" },
     { id: "classify", label: "Classify", full: "Assign priority and category", done: Boolean(item && item.priority && item.category && item.diagnosis), active: stage.id === "classify" },
     { id: "troubleshoot", label: "Troubleshoot", full: "Choose troubleshooting steps", done: Boolean(item && item.troubleshooting.length), active: stage.id === "troubleshoot" },
-    { id: "close", label: "Close", full: "Resolve, escalate, dispatch, deny, postpone", done: Boolean(item && item.status === "resolved"), active: stage.id === "close" },
+    { id: "close", label: "Close", full: "Resolve, escalate, dispatch, deny, or monitor", done: Boolean(item && item.status === "resolved"), active: stage.id === "close" },
     { id: "follow", label: "Follow up", full: "Consequences and follow-up tickets", done: Boolean(item && item.status === "resolved"), active: stage.id === "follow" }
   ];
 
@@ -2086,15 +2368,16 @@ function renderQueue(items) {
 
   els.queueList.innerHTML = items.map((item) => {
     const active = item.id === state.selectedId ? " active" : "";
-    const resolved = item.status === "resolved" ? " resolved" : "";
+    const resolved = item.status === "resolved" ? " resolved" : item.onHold ? " on-hold" : "";
     const age = Math.max(0, state.time - item.arrival);
     const stage = stageLabel(item);
     const warning = item.securityRisk && !item.revealed.includes("verify") && item.status !== "resolved";
+    const slaText = item.status === "resolved" ? "" : item.onHold ? ` | On hold until ${formatTime(item.holdUntil)}` : item.slaBreached ? " | SLA breached" : ` | SLA ${slaDueMinute(item) - state.time}m left`;
     return `
       <button class="queue-item${active}${resolved}" data-select="${item.id}">
         <span class="queue-main">
           <strong>${item.title}</strong>
-          <span class="queue-meta">${formatTime(item.arrival)} arrival | ${age}m old | ${item.requester}</span>
+          <span class="queue-meta">${formatTime(item.arrival)} arrival | ${age}m old${slaText} | ${item.requester}</span>
           <span class="queue-stage">${stage}${warning ? " | Verify before access changes" : ""}</span>
           <span class="signal-list queue-signals">
             ${signalTags(item).slice(0, 3).map((tag) => `<span>${tag}</span>`).join("")}
@@ -2204,7 +2487,7 @@ function renderCase(item) {
 
   els.caseTitle.textContent = item.title;
   els.caseSignals.innerHTML = signalTags(item).map((tag) => `<span>${tag}</span>`).join("");
-  els.caseStatus.textContent = item.status === "resolved" ? `${item.quality} | ${item.score}` : `${item.channel} | ${formatTime(item.arrival)}`;
+  els.caseStatus.textContent = item.status === "resolved" ? `${item.quality} | ${item.score}` : item.onHold ? `On hold until ${formatTime(item.holdUntil)}` : `${item.channel} | ${formatTime(item.arrival)}`;
   els.caseFacts.innerHTML = `
     <dt>Requester</dt><dd>${item.requester}</dd>
     <dt>Department</dt><dd>${item.department}</dd>
@@ -2252,8 +2535,8 @@ function renderRiskLens(item) {
 }
 
 function renderActions(item) {
-  const disabled = !item || item.status === "resolved";
-  els.actionHint.textContent = disabled ? "Select an unresolved incident." : "Every action spends shift time.";
+  const disabled = !workable(item);
+  els.actionHint.textContent = item?.onHold ? "Ticket on hold. Resume it to keep working." : disabled ? "Select an unresolved incident." : "Every action spends shift time.";
 
   els.investigationActions.innerHTML = investigationActions.map((action) => {
     const done = item && item.revealed.includes(action.id);
@@ -2289,16 +2572,19 @@ function renderCloseReadiness(item) {
 }
 
 function renderDecision(item) {
-  const disabled = !item || item.status === "resolved";
+  const disabled = !workable(item);
   const missingClassification = !item || !item.diagnosis || !item.category || !item.priority;
+  const classifyDisabled = !classificationUnlocked(item);
+  const classifyTitle = classifyDisabled && !disabled ? ' title="Gather at least one piece of evidence before classifying."' : "";
   const troubleshootDisabled = disabled || missingClassification;
   const resolutionDisabled = troubleshootDisabled || !item.troubleshooting.length;
   const missingNames = requirementItems(item).filter((requirement) => ["diagnosis", "category", "priority"].includes(requirement.id) && !requirement.done).map((requirement) => requirement.label);
   renderCloseReadiness(item);
 
   if (disabled) {
-    els.troubleshootHelper.textContent = item && item.status === "resolved" ? "Ticket already resolved." : "Select an unresolved incident.";
-    els.resolutionHelper.textContent = item && item.status === "resolved" ? "Ticket already resolved." : "Select an unresolved incident.";
+    const lockedText = item?.onHold ? "Ticket on hold. Resume it to keep working." : item && item.status === "resolved" ? "Ticket already resolved." : "Select an unresolved incident.";
+    els.troubleshootHelper.textContent = lockedText;
+    els.resolutionHelper.textContent = lockedText;
   } else if (missingClassification) {
     els.troubleshootHelper.textContent = `Classify first: ${missingNames.join(", ")} missing.`;
     els.resolutionHelper.textContent = "Choose troubleshooting before closing.";
@@ -2306,33 +2592,33 @@ function renderDecision(item) {
     els.troubleshootHelper.textContent = "Choose at least one concrete troubleshooting step.";
     els.resolutionHelper.textContent = "Final action unlocks after troubleshooting.";
   } else {
-    els.troubleshootHelper.textContent = "Troubleshooting selected. Additional steps spend more shift time.";
+    els.troubleshootHelper.textContent = "Troubleshooting selected. Unnecessary extra steps cost time and are marked down in review.";
     els.resolutionHelper.textContent = "Ready to choose the final path.";
   }
 
   els.diagnosisControl.innerHTML = diagnosisOptions.map((diagnosis) => `
-    <button data-diagnosis="${diagnosis.id}" class="${state.selectedDiagnosis === diagnosis.id ? "selected" : ""}" ${disabled ? "disabled" : ""}>${diagnosis.label}</button>
+    <button data-diagnosis="${diagnosis.id}" class="${state.selectedDiagnosis === diagnosis.id ? "selected" : ""}" ${classifyDisabled ? "disabled" : ""}${classifyTitle}>${diagnosis.label}</button>
   `).join("");
 
   els.categoryControl.innerHTML = categoryOptions.map((category) => `
-    <button data-category="${category.id}" class="${state.selectedCategory === category.id ? "selected" : ""}" ${disabled ? "disabled" : ""}>${category.label}</button>
+    <button data-category="${category.id}" class="${state.selectedCategory === category.id ? "selected" : ""}" ${classifyDisabled ? "disabled" : ""}${classifyTitle}>${category.label}</button>
   `).join("");
 
   els.priorityControl.innerHTML = priorities.map((priority) => `
-    <button data-priority="${priority}" class="${state.selectedPriority === priority ? "selected" : ""}" ${disabled ? "disabled" : ""}>${priority}</button>
+    <button data-priority="${priority}" class="${state.selectedPriority === priority ? "selected" : ""}" ${classifyDisabled ? "disabled" : ""}${classifyTitle}>${priority}</button>
   `).join("");
 
   els.troubleshootControl.innerHTML = troubleshootingOptions.map((step) => `
     <button data-troubleshoot="${step.id}" class="${state.selectedTroubleshooting.includes(step.id) ? "selected" : ""}" ${troubleshootDisabled ? "disabled" : ""}>
       ${step.label}
-      <small>${step.cost}m</small>
+      <small>${item?.troubleshootingPerformed?.includes(step.id) ? "Done" : `${step.cost}m`}</small>
     </button>
   `).join("");
 
   els.resolutionGrid.innerHTML = resolutionOptions.map((option) => {
     const hint = finalActionHintFor(item, option, resolutionDisabled);
     return `
-      <button class="resolution-button ${hint.tone}" data-resolution="${option.id}" title="${hint.text}" ${resolutionDisabled ? "disabled" : ""}>
+      <button class="resolution-button ${hint.tone}" data-resolution="${option.id}" title="${hint.text}" ${resolutionDisabled || resourceExhausted(option) ? "disabled" : ""}>
         ${option.label}
         <small>${option.cost}m${option.resource ? ` | ${state.resources[option.resource].remaining} left` : ""}</small>
         <span class="resolution-risk ${hint.tone}">${hint.text}</span>
@@ -2377,6 +2663,11 @@ els.summaryBody.addEventListener("click", (event) => {
 els.ackCloseReview.addEventListener("click", hideCloseReview);
 els.cancelCloseWarning.addEventListener("click", hideCloseWarning);
 els.confirmCloseWarning.addEventListener("click", confirmCloseWarning);
+document.addEventListener("keydown", handleModalKeys);
+els.holdButton.addEventListener("click", () => {
+  if (selectedCase()?.onHold) resumeCurrent();
+  else postponeCurrent();
+});
 els.nextActionButton.addEventListener("click", () => jumpToTarget(els.nextActionButton.dataset.target));
 
 unlockArrivals();

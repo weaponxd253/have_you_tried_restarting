@@ -133,7 +133,7 @@
         <section class="panel decision-panel" id="decisionPanel" tabindex="-1">
           <div>
             <h2>Troubleshoot And Close</h2>
-            <p>Choose the technical step, then resolve, escalate, dispatch, deny, or postpone.</p>
+            <p>Choose the technical step, then resolve, escalate, dispatch, deny, or monitor. Not ready yet? Postpone it.</p>
           </div>
           <div class="decision-readiness" id="closeReadiness" aria-live="polite">
             <div>
@@ -151,6 +151,13 @@
             <span class="group-label">Final Action</span>
             <p class="control-helper" id="resolutionHelper">Choose a troubleshooting step before closing the ticket.</p>
             <div class="resolution-grid" id="resolutionGrid"></div>
+          </div>
+          <div class="decision-group hold-group" id="holdSection">
+            <span class="group-label">Postpone</span>
+            <div class="hold-row">
+              <button class="icon-button" id="holdButton" disabled>Postpone 30m</button>
+              <p class="control-helper" id="holdHelper">Select an open incident.</p>
+            </div>
           </div>
         </section>
       </section>
