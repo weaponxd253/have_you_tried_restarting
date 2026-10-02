@@ -720,10 +720,16 @@ function strongestRuleFor(item) {
   return relevantRulesFor(item)[0] || null;
 }
 
+function acceptedResolutionsFor(caseItem) {
+  return caseItem ? [caseItem.correctResolution, ...(caseItem.acceptAlso || [])] : [];
+}
+
 function violatedRulesFor(caseItem) {
   if (!caseItem) return [];
   const itemTags = new Set(caseItem.ruleTags || []);
   const unsafeAccessAction = ["reset_access", "remote_fix", "dispatch"].includes(caseItem.resolution);
+  // Follow-ups inherit the original's rule tags, so a resolution the case itself accepts never breaks a routing rule.
+  const acceptedResolution = acceptedResolutionsFor(caseItem).includes(caseItem.resolution);
 
   return relevantRulesFor(caseItem).filter((rule) => {
     if (rule.id === "mfa-callback") {
@@ -733,10 +739,10 @@ function violatedRulesFor(caseItem) {
       return caseItem.correctPriority === "P1" && caseItem.priority !== "P1";
     }
     if (rule.id === "finance-restricted") {
-      return itemTags.has("finance") && !["deny", "security"].includes(caseItem.resolution);
+      return itemTags.has("finance") && !acceptedResolution && !["deny", "security"].includes(caseItem.resolution);
     }
     if (rule.id === "correlation") {
-      return itemTags.has("correlation") && !["apps", "network", "monitor"].includes(caseItem.resolution);
+      return itemTags.has("correlation") && !acceptedResolution && !["apps", "network", "monitor"].includes(caseItem.resolution);
     }
     return false;
   });
@@ -776,7 +782,9 @@ function actionFitsSelectedCategory(item, option) {
     hardware: ["dispatch", "remote_fix"],
     asset: ["dispatch", "remote_fix", "monitor"]
   };
-  return (fitByCategory[item.category] || []).includes(option.id);
+  if ((fitByCategory[item.category] || []).includes(option.id)) return true;
+  // Some incidents route outside the generic table (e.g. an identity outage owned by Apps), so honor the case's own accepted routes.
+  return item.category === item.correctCategory && acceptedResolutionsFor(item).includes(option.id);
 }
 
 function closeReadinessFor(item, resolutionId = null) {
