@@ -141,7 +141,8 @@ const channelStatus = [
   { id: "Chat", label: "Chat" },
   { id: "Ticket", label: "Tickets" },
   { id: "Monitoring", label: "Alerts" },
-  { id: "Walk-up", label: "Walk-ups" }
+  { id: "Walk-up", label: "Walk-ups" },
+  { id: "Follow-up", label: "Follow-ups" }
 ];
 
 const cases = [
@@ -547,7 +548,8 @@ let pendingResolutionId = null;
 
 const els = {
   clock: document.querySelector("#clock"),
-  queueCount: document.querySelector("#queueCount"),
+  closedCount: document.querySelector("#closedCount"),
+  caseSla: document.querySelector("#caseSla"),
   openCount: document.querySelector("#openCount"),
   queueList: document.querySelector("#queueList"),
   patternHint: document.querySelector("#patternHint"),
@@ -576,6 +578,7 @@ const els = {
   troubleshootSection: document.querySelector("#troubleshootSection"),
   resolutionSection: document.querySelector("#resolutionSection"),
   caseFacts: document.querySelector("#caseFacts"),
+  caseMemory: document.querySelector("#caseMemory"),
   evidenceLog: document.querySelector("#evidenceLog"),
   riskLens: document.querySelector("#riskLens"),
   ruleRiskNote: document.querySelector("#ruleRiskNote"),
@@ -1530,7 +1533,7 @@ function jumpToTarget(target) {
     advance(Math.max(1, nextArrival - state.time));
     return;
   }
-  node.scrollIntoView({ behavior: "smooth", block: "center" });
+  node.scrollIntoView({ behavior: "smooth", block: "start" });
   if (typeof node.focus === "function") {
     node.focus({ preventScroll: true });
   }
@@ -2206,7 +2209,7 @@ function render() {
   const current = selectedCase();
 
   els.clock.textContent = formatTime(state.time);
-  els.queueCount.textContent = available.length;
+  els.closedCount.textContent = available.length - open.length;
   els.openCount.textContent = open.length;
 
   renderShiftControl(available);
@@ -2323,22 +2326,25 @@ function renderStageHighlights(item) {
 }
 
 function renderChannelStatus(open) {
-  const counts = channelStatus.map((channel) => ({
-    ...channel,
-    count: open.filter((item) => item.channel === channel.id).length
-  }));
+  const counts = channelStatus
+    .map((channel) => ({ ...channel, count: open.filter((item) => item.channel === channel.id).length }))
+    .filter((channel) => channel.count);
+  els.channelStatus.innerHTML = counts.length
+    ? counts.map((channel) => `<span class="channel-chip">${channel.label} <strong>${channel.count}</strong></span>`).join("")
+    : "";
+}
 
-  els.channelStatus.innerHTML = counts.map((channel) => `
-    <div class="channel-tile ${channel.count ? "active" : ""}">
-      <span>${channel.label}</span>
-      <strong>${channel.count}</strong>
-    </div>
-  `).join("") + `
-    <div class="channel-tile ${state.resources.field.remaining < state.resources.field.max ? "active" : ""}">
-      <span>Dispatch</span>
-      <strong>${state.resources.field.remaining}</strong>
-    </div>
-  `;
+function slaChipFor(item) {
+  if (!item || item.status === "resolved") return null;
+  if (item.onHold) return { text: `On hold to ${formatTime(item.holdUntil)}`, tone: "hold" };
+  if (item.slaBreached) return { text: "SLA breached", tone: "danger" };
+  const left = slaDueMinute(item) - state.time;
+  return { text: `SLA ${left}m`, tone: left <= 10 ? "warn" : "ok" };
+}
+
+function slaChipHtml(item) {
+  const chip = slaChipFor(item);
+  return chip ? `<span class="sla-chip ${chip.tone}">${chip.text}</span>` : "";
 }
 
 let closedQueueOpen = false;
@@ -2385,13 +2391,12 @@ function queueItemHtml(item) {
   const age = Math.max(0, state.time - item.arrival);
   const stage = stageLabel(item);
   const warning = item.securityRisk && !item.revealed.includes("verify") && item.status !== "resolved";
-  const slaText = item.status === "resolved" ? "" : item.onHold ? ` | On hold until ${formatTime(item.holdUntil)}` : item.slaBreached ? " | SLA breached" : ` | SLA ${slaDueMinute(item) - state.time}m left`;
   return `
     <button class="queue-item${active}${resolved}" data-select="${item.id}">
       <span class="queue-main">
         <strong>${item.title}</strong>
-        <span class="queue-meta">${formatTime(item.arrival)} arrival | ${age}m old${slaText} | ${item.requester}</span>
-        <span class="queue-stage">${stage}${warning ? " | Verify before access changes" : ""}</span>
+        <span class="queue-meta">${formatTime(item.arrival)} arrival | ${age}m old | ${item.requester}</span>
+        <span class="queue-stage">${slaChipHtml(item)}<span>${stage}${warning ? " | Verify before access changes" : ""}</span></span>
         <span class="signal-list queue-signals">
           ${signalTags(item).slice(0, 3).map((tag) => `<span>${tag}</span>`).join("")}
         </span>
@@ -2467,6 +2472,8 @@ function renderRules() {
   }).join("");
 }
 
+let caseMemoryOpen = false;
+
 function renderAuditPreview(item) {
   const entries = (item.audit || []).slice(0, 5);
   if (!entries.length) return "No audit entries yet";
@@ -2480,6 +2487,8 @@ function renderCase(item) {
     els.caseTitle.textContent = "Shift not started";
     els.caseSignals.innerHTML = "";
     els.caseStatus.textContent = "Ready";
+    els.caseSla.className = "sla-chip hidden";
+    els.caseMemory.innerHTML = "";
     els.caseFacts.innerHTML = `
       <dt>Status</dt><dd>Desk staffed and monitoring systems idle.</dd>
       <dt>Next</dt><dd>Start the shift to receive live work.</dd>
@@ -2491,19 +2500,30 @@ function renderCase(item) {
 
   els.caseTitle.textContent = item.title;
   els.caseSignals.innerHTML = signalTags(item).map((tag) => `<span>${tag}</span>`).join("");
-  els.caseStatus.textContent = item.status === "resolved" ? `${item.quality} | ${item.score}` : item.onHold ? `On hold until ${formatTime(item.holdUntil)}` : `${item.channel} | ${formatTime(item.arrival)}`;
+  els.caseStatus.textContent = item.status === "resolved" ? `${item.quality} | ${item.score}` : `${item.channel} | ${formatTime(item.arrival)}`;
+  const slaChip = slaChipFor(item);
+  els.caseSla.className = slaChip ? `sla-chip ${slaChip.tone}` : "sla-chip hidden";
+  els.caseSla.textContent = slaChip ? slaChip.text : "";
   els.caseFacts.innerHTML = `
     <dt>Requester</dt><dd>${item.requester}</dd>
     <dt>Department</dt><dd>${item.department}</dd>
     <dt>Location</dt><dd>${item.location}</dd>
     <dt>Report</dt><dd>${item.report}</dd>
     ${item.origin ? `<dt>Original Decision</dt><dd>${item.origin.decision} | ${item.origin.quality} | ${item.origin.severity}</dd>` : ""}
+    ${Object.entries(item.facts).map(([key, value]) => `<dt>${key}</dt><dd>${value}</dd>`).join("")}
     <dt>Classification</dt><dd>${item.diagnosis ? labelFor(diagnosisOptions, item.diagnosis) : "Undiagnosed"} | ${item.category ? labelFor(categoryOptions, item.category) : "Uncategorized"} | ${item.priority || "No priority"}</dd>
     <dt>Troubleshooting</dt><dd>${item.troubleshooting.length ? item.troubleshooting.map((step) => labelFor(troubleshootingOptions, step)).join(", ") : "No step chosen"}</dd>
     ${item.quality ? `<dt>Close Review</dt><dd>${item.quality} | ${item.severity} | Score ${item.score}</dd>` : ""}
-    <dt>Case Memory</dt><dd>${renderAuditPreview(item)}</dd>
-    ${Object.entries(item.facts).map(([key, value]) => `<dt>${key}</dt><dd>${value}</dd>`).join("")}
   `;
+  els.caseMemory.innerHTML = `
+    <details class="case-memory-group"${caseMemoryOpen ? " open" : ""}>
+      <summary>Case memory (${(item.audit || []).length})</summary>
+      ${renderAuditPreview(item)}
+    </details>
+  `;
+  els.caseMemory.querySelector("details").addEventListener("toggle", (event) => {
+    caseMemoryOpen = event.target.open;
+  });
 
   const evidence = [...item.evidence];
   item.revealed
@@ -2625,7 +2645,7 @@ function renderDecision(item) {
       <button class="resolution-button ${hint.tone}" data-resolution="${option.id}" title="${hint.text}" ${resolutionDisabled || resourceExhausted(option) ? "disabled" : ""}>
         ${option.label}
         <small>${option.cost}m${option.resource ? ` | ${state.resources[option.resource].remaining} left` : ""}</small>
-        <span class="resolution-risk ${hint.tone}">${hint.text}</span>
+        ${resolutionDisabled ? "" : `<span class="resolution-risk ${hint.tone}">${hint.text}</span>`}
       </button>
     `;
   }).join("");
@@ -2669,9 +2689,14 @@ els.cancelCloseWarning.addEventListener("click", hideCloseWarning);
 els.confirmCloseWarning.addEventListener("click", confirmCloseWarning);
 document.addEventListener("keydown", handleModalKeys);
 const topbar = document.querySelector(".topbar");
+const actionBar = document.querySelector(".next-action-bar");
 new ResizeObserver(() => {
   document.documentElement.style.setProperty("--topbar-h", `${topbar.offsetHeight}px`);
+  document.documentElement.style.setProperty("--actionbar-h", `${actionBar.offsetHeight}px`);
 }).observe(topbar);
+new ResizeObserver(() => {
+  document.documentElement.style.setProperty("--actionbar-h", `${actionBar.offsetHeight}px`);
+}).observe(actionBar);
 els.holdButton.addEventListener("click", () => {
   if (selectedCase()?.onHold) resumeCurrent();
   else postponeCurrent();
