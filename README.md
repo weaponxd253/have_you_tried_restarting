@@ -16,7 +16,7 @@ Each choice spends shift time, consumes limited resources, and affects trust, se
 
 The shift ends automatically at 12:00. Every open ticket has a response target based on its SLA risk (Critical 30m, Rising 60m, Low 90m); letting it wait past that target costs SLA health and user trust. Extra troubleshooting steps that do not address the cause are marked down in the close review. Postponing puts a ticket on hold for 30 minutes (once per ticket): it stays open, its SLA clock pauses, and it returns to the queue on its own or when resumed. Each postpone costs a little user trust, and parking Critical or security-sensitive work costs SLA and security posture too. Classification unlocks after the first investigation step, and a correct diagnosis or priority only earns full credit when the gathered evidence backs it (diagnostics or follow-up questions for diagnosis, records or diagnostics for priority).
 
-The current layout emphasizes the active ticket stage, with classification visible above the fold, compact channel pressure, and follow-up work returning to the live queue.
+The layout keeps feedback in view while you work: shift health meters sit in a sticky header, the supervisor feed stays pinned beside the workbench, and a single sticky bar shows the current stage, requirements, and next action. The workbench follows the order of the job (report and evidence, investigation, classification, then troubleshoot and close), and the live queue lists open work by soonest SLA deadline with closed tickets folded away.
 
 Gameplay readability features include queue signal tags, active-ticket risk lens, evidence progress, requirement status chips, clearer disabled-control hints, and richer investigation feedback.
 

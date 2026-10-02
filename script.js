@@ -558,8 +558,6 @@ const els = {
   caseSignals: document.querySelector("#caseSignals"),
   caseStatus: document.querySelector("#caseStatus"),
   stageTitle: document.querySelector("#stageTitle"),
-  stageHint: document.querySelector("#stageHint"),
-  stageMissing: document.querySelector("#stageMissing"),
   evidenceProgress: document.querySelector("#evidenceProgress"),
   requirementStatus: document.querySelector("#requirementStatus"),
   nextActionTitle: document.querySelector("#nextActionTitle"),
@@ -582,8 +580,6 @@ const els = {
   riskLens: document.querySelector("#riskLens"),
   ruleRiskNote: document.querySelector("#ruleRiskNote"),
   rulesList: document.querySelector("#rulesList"),
-  workflowSteps: document.querySelector("#workflowSteps"),
-  workflowHint: document.querySelector("#workflowHint"),
   investigationActions: document.querySelector("#investigationActions"),
   priorityControl: document.querySelector("#priorityControl"),
   diagnosisControl: document.querySelector("#diagnosisControl"),
@@ -1140,6 +1136,12 @@ function skillNarrative(skills) {
   const sorted = [...skills].sort((a, b) => b.score - a.score);
   const top = sorted[0];
   const bottom = sorted[sorted.length - 1];
+  if (top.score === bottom.score) {
+    return {
+      strength: top.score > 0 ? `Every tracked skill landed at ${top.score}%.` : "No skill stood out yet.",
+      weakness: top.score === 100 ? "No weak spot this shift." : `Skills were even at ${top.score}%; no single area lagged behind.`
+    };
+  }
   return {
     strength: `${top.label}: ${top.strength}`,
     weakness: `${bottom.label}: ${bottom.weakness}`
@@ -1279,7 +1281,7 @@ function postponeCurrent() {
     null,
     ["Hold"]
   );
-  const next = openCases().find(workable);
+  const next = queueOrder(openCases()).active.find(workable);
   if (next) {
     state.selectedId = next.id;
     syncSelectionFromCase(next);
@@ -1668,7 +1670,7 @@ function resolveCurrent(resolutionId, readinessSnapshot = null) {
   advance(option.cost);
   if (state.shiftEnded) return;
 
-  const next = openCases().find(workable) || openCases()[0];
+  const next = queueOrder(openCases()).active[0];
   state.selectedId = next ? next.id : current.id;
   state.selectedDiagnosis = next ? next.diagnosis : current.diagnosis;
   state.selectedCategory = next ? next.category : current.category;
@@ -2103,6 +2105,8 @@ function endShift() {
     state.time = Math.max(state.time, nextMinute);
     processScheduled();
   }
+  // Draining consequences moves the clock; put it back so the board shows the moment the shift ended.
+  state.time = state.shiftEndMinute;
   render();
   showSummary();
 }
@@ -2217,7 +2221,6 @@ function render() {
   renderStageBar(current);
   renderNextAction(current);
   renderStageHighlights(current);
-  renderWorkflow(current);
   renderActions(current);
   renderDecision(current);
   renderHold(current);
@@ -2269,8 +2272,6 @@ function renderPatternHint(open) {
 function renderStageBar(item) {
   const stage = currentStage(item);
   els.stageTitle.textContent = stage.title;
-  els.stageHint.textContent = stage.hint;
-  els.stageMissing.innerHTML = stage.missing.map((missing) => `<span>${missing}</span>`).join("");
   els.evidenceProgress.textContent = item ? `Evidence ${evidenceCount(item)}/${evidenceTotal(item)}` : "Evidence 0/0";
   els.requirementStatus.innerHTML = requirementItems(item).map((requirement) => `
     <span class="${requirement.done ? "done" : ""}">${requirement.done ? "OK" : "--"} ${requirement.label}</span>
@@ -2340,24 +2341,13 @@ function renderChannelStatus(open) {
   `;
 }
 
-function renderWorkflow(item) {
-  const stage = currentStage(item);
-  const stages = [
-    { id: "ticket", label: "Arrive", full: "Ticket arrives", done: Boolean(item), active: stage.id === "start" },
-    { id: "review", label: "Review", full: "Review user, device, symptoms, history", done: Boolean(item), active: stage.id === "investigate" },
-    { id: "investigate", label: "Investigate", full: "Ask questions or run diagnostics", done: Boolean(item && item.revealed.length > 1), active: stage.id === "investigate" },
-    { id: "classify", label: "Classify", full: "Assign priority and category", done: Boolean(item && item.priority && item.category && item.diagnosis), active: stage.id === "classify" },
-    { id: "troubleshoot", label: "Troubleshoot", full: "Choose troubleshooting steps", done: Boolean(item && item.troubleshooting.length), active: stage.id === "troubleshoot" },
-    { id: "close", label: "Close", full: "Resolve, escalate, dispatch, deny, or monitor", done: Boolean(item && item.status === "resolved"), active: stage.id === "close" },
-    { id: "follow", label: "Follow up", full: "Consequences and follow-up tickets", done: Boolean(item && item.status === "resolved"), active: stage.id === "follow" }
-  ];
+let closedQueueOpen = false;
 
-  els.workflowSteps.innerHTML = stages.map((stage, index) => {
-    const className = stage.done ? "done" : stage.active ? "active" : "";
-    const marker = stage.done ? "OK" : String(index + 1);
-    return `<li class="workflow-step ${className}" title="${stage.full}"><span>${marker}</span><strong>${stage.label}</strong></li>`;
-  }).join("");
-  els.workflowHint.textContent = stage.hint;
+function queueOrder(items) {
+  const open = items.filter(workable).sort((a, b) => slaDueMinute(a) - slaDueMinute(b) || a.arrival - b.arrival);
+  const held = items.filter((item) => item.onHold).sort((a, b) => a.holdUntil - b.holdUntil);
+  const closed = items.filter((item) => item.status === "resolved").sort((a, b) => b.arrival - a.arrival);
+  return { active: [...open, ...held], closed };
 }
 
 function renderQueue(items) {
@@ -2366,33 +2356,20 @@ function renderQueue(items) {
     return;
   }
 
-  els.queueList.innerHTML = items.map((item) => {
-    const active = item.id === state.selectedId ? " active" : "";
-    const resolved = item.status === "resolved" ? " resolved" : item.onHold ? " on-hold" : "";
-    const age = Math.max(0, state.time - item.arrival);
-    const stage = stageLabel(item);
-    const warning = item.securityRisk && !item.revealed.includes("verify") && item.status !== "resolved";
-    const slaText = item.status === "resolved" ? "" : item.onHold ? ` | On hold until ${formatTime(item.holdUntil)}` : item.slaBreached ? " | SLA breached" : ` | SLA ${slaDueMinute(item) - state.time}m left`;
-    return `
-      <button class="queue-item${active}${resolved}" data-select="${item.id}">
-        <span class="queue-main">
-          <strong>${item.title}</strong>
-          <span class="queue-meta">${formatTime(item.arrival)} arrival | ${age}m old${slaText} | ${item.requester}</span>
-          <span class="queue-stage">${stage}${warning ? " | Verify before access changes" : ""}</span>
-          <span class="signal-list queue-signals">
-            ${signalTags(item).slice(0, 3).map((tag) => `<span>${tag}</span>`).join("")}
-          </span>
-        </span>
-        <span class="queue-badges">
-          <span class="channel-badge">${item.channel}</span>
-          ${item.category ? `<span class="category-badge">${labelFor(categoryOptions, item.category)}</span>` : ""}
-          ${item.priority ? `<span class="priority-badge">${item.priority}</span>` : ""}
-          ${item.quality ? `<span class="quality-badge severity-${item.severity.toLowerCase()}">${item.quality}</span>` : ""}
-        </span>
-      </button>
-    `;
-  }).join("");
+  const { active, closed } = queueOrder(items);
+  const nextArrival = futureCases()[0];
+  const emptyNote = active.length ? "" : `<p class="queue-meta queue-empty">No open tickets.${nextArrival && !state.shiftEnded ? ` Next arrival around ${formatTime(nextArrival.arrival)}.` : ""}</p>`;
+  const closedGroup = closed.length ? `
+    <details class="queue-closed"${closedQueueOpen ? " open" : ""}>
+      <summary>Closed (${closed.length})</summary>
+      <div class="queue-closed-list">${closed.map(queueItemHtml).join("")}</div>
+    </details>
+  ` : "";
+  els.queueList.innerHTML = emptyNote + active.map(queueItemHtml).join("") + closedGroup;
 
+  els.queueList.querySelector(".queue-closed")?.addEventListener("toggle", (event) => {
+    closedQueueOpen = event.target.open;
+  });
   document.querySelectorAll("[data-select]").forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedId = button.dataset.select;
@@ -2400,6 +2377,33 @@ function renderQueue(items) {
       render();
     });
   });
+}
+
+function queueItemHtml(item) {
+  const active = item.id === state.selectedId ? " active" : "";
+  const resolved = item.status === "resolved" ? " resolved" : item.onHold ? " on-hold" : "";
+  const age = Math.max(0, state.time - item.arrival);
+  const stage = stageLabel(item);
+  const warning = item.securityRisk && !item.revealed.includes("verify") && item.status !== "resolved";
+  const slaText = item.status === "resolved" ? "" : item.onHold ? ` | On hold until ${formatTime(item.holdUntil)}` : item.slaBreached ? " | SLA breached" : ` | SLA ${slaDueMinute(item) - state.time}m left`;
+  return `
+    <button class="queue-item${active}${resolved}" data-select="${item.id}">
+      <span class="queue-main">
+        <strong>${item.title}</strong>
+        <span class="queue-meta">${formatTime(item.arrival)} arrival | ${age}m old${slaText} | ${item.requester}</span>
+        <span class="queue-stage">${stage}${warning ? " | Verify before access changes" : ""}</span>
+        <span class="signal-list queue-signals">
+          ${signalTags(item).slice(0, 3).map((tag) => `<span>${tag}</span>`).join("")}
+        </span>
+      </span>
+      <span class="queue-badges">
+        <span class="channel-badge">${item.channel}</span>
+        ${item.category ? `<span class="category-badge">${labelFor(categoryOptions, item.category)}</span>` : ""}
+        ${item.priority ? `<span class="priority-badge">${item.priority}</span>` : ""}
+        ${item.quality ? `<span class="quality-badge severity-${item.severity.toLowerCase()}">${item.quality}</span>` : ""}
+      </span>
+    </button>
+  `;
 }
 
 function renderResources() {
@@ -2426,7 +2430,7 @@ function renderMetrics() {
   els.metricList.innerHTML = Object.entries(state.metrics).map(([key, value]) => {
     const tone = value < 35 ? "danger" : value < 55 ? "warn" : "";
     return `
-      <div class="metric-row">
+      <div class="health-item ${tone}" title="${labels[key]} ${value}/100">
         <div class="metric-top"><span class="metric-label">${labels[key]}</span><strong>${value}</strong></div>
         <div class="meter ${tone}"><span style="width:${value}%"></span></div>
       </div>
@@ -2664,6 +2668,10 @@ els.ackCloseReview.addEventListener("click", hideCloseReview);
 els.cancelCloseWarning.addEventListener("click", hideCloseWarning);
 els.confirmCloseWarning.addEventListener("click", confirmCloseWarning);
 document.addEventListener("keydown", handleModalKeys);
+const topbar = document.querySelector(".topbar");
+new ResizeObserver(() => {
+  document.documentElement.style.setProperty("--topbar-h", `${topbar.offsetHeight}px`);
+}).observe(topbar);
 els.holdButton.addEventListener("click", () => {
   if (selectedCase()?.onHold) resumeCurrent();
   else postponeCurrent();

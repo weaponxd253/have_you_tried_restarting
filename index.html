@@ -9,10 +9,11 @@
 <body>
   <div class="app-shell">
     <header class="topbar">
-      <div>
+      <div class="topbar-title">
         <p class="eyebrow">Northstar Systems Help Desk</p>
         <h1>Have You Tried Restarting?</h1>
       </div>
+      <div id="metricList" class="health-strip" aria-label="Shift health"></div>
       <div class="shift-stats" aria-label="Shift status">
         <div>
           <span>Clock</span>
@@ -44,12 +45,6 @@
           <h2>Resources</h2>
           <div id="resourceList" class="resource-list"></div>
         </section>
-
-        <section class="panel workflow-panel">
-          <h2>Shift Flow</h2>
-          <ol id="workflowSteps" class="workflow-list"></ol>
-          <p id="workflowHint" class="workflow-hint">Start the shift to begin the queue.</p>
-        </section>
       </aside>
 
       <section class="workbench" aria-label="Case workbench">
@@ -62,25 +57,16 @@
           <div class="status-pill" id="caseStatus">Stand by</div>
         </div>
 
-        <section class="stage-bar" aria-live="polite">
-          <div>
-            <p class="eyebrow">Current Stage</p>
-            <h2 id="stageTitle">Start Shift</h2>
+        <section class="next-action-bar" aria-live="polite">
+          <div class="next-action-copy">
+            <p class="eyebrow">Stage: <span id="stageTitle">Start Shift</span></p>
+            <h2 id="nextActionTitle">Start Shift</h2>
+            <p id="nextActionHint">Start the shift to receive live work.</p>
           </div>
-          <p id="stageHint">Start the shift to receive calls, tickets, chats, alerts, and walk-ups.</p>
-          <div class="stage-right">
+          <div class="stage-progress">
             <div id="evidenceProgress" class="evidence-progress"></div>
-            <div id="stageMissing" class="missing-list"></div>
             <div id="requirementStatus" class="requirement-status"></div>
           </div>
-        </section>
-
-        <section class="next-action-bar" aria-live="polite">
-          <div>
-            <p class="eyebrow">Next Action</p>
-            <h2 id="nextActionTitle">Start Shift</h2>
-          </div>
-          <p id="nextActionHint">Start the shift to receive live work.</p>
           <button class="primary-button next-action-button" id="nextActionButton">Start Shift</button>
         </section>
 
@@ -96,6 +82,17 @@
             <h2>Evidence</h2>
             <div id="evidenceLog" class="evidence-log"></div>
           </section>
+        </div>
+
+        <section class="panel actions-panel" id="actionsPanel" tabindex="-1">
+          <div class="panel-heading">
+            <h2>Investigation</h2>
+            <span id="actionHint">Pick an incident from the queue.</span>
+          </div>
+          <div class="action-grid" id="investigationActions"></div>
+        </section>
+
+        <div class="classify-grid">
           <section class="panel classification-panel" id="classificationPanel" tabindex="-1">
             <h2>Classification</h2>
             <div class="decision-group" id="diagnosisSection" tabindex="-1">
@@ -121,14 +118,6 @@
             <ul id="rulesList"></ul>
           </section>
         </div>
-
-        <section class="panel actions-panel" id="actionsPanel" tabindex="-1">
-          <div class="panel-heading">
-            <h2>Investigation</h2>
-            <span id="actionHint">Pick an incident from the queue.</span>
-          </div>
-          <div class="action-grid" id="investigationActions"></div>
-        </section>
 
         <section class="panel decision-panel" id="decisionPanel" tabindex="-1">
           <div>
@@ -163,11 +152,7 @@
       </section>
 
       <aside class="right-rail" aria-label="Shift feedback">
-        <section class="panel score-panel">
-          <h2>Shift Health</h2>
-          <div id="metricList" class="metric-list"></div>
-        </section>
-        <section class="panel">
+        <section class="panel feed-panel">
           <div class="panel-heading">
             <h2>Supervisor Feed</h2>
             <button class="icon-button" id="endShift" title="End shift" aria-label="End shift">End</button>

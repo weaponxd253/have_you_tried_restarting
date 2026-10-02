@@ -59,12 +59,58 @@ button:disabled {
 }
 
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 15;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
+  gap: 10px 18px;
   max-width: 1720px;
-  margin: 0 auto 16px;
+  margin: -18px auto 16px;
+  padding: 10px 0;
+  background: var(--bg);
+  /* Paint the bar edge to edge while the content stays centered. */
+  box-shadow: 0 0 0 100vmax var(--bg);
+  clip-path: inset(0 -100vmax);
+}
+
+.topbar-title {
+  flex: 0 1 auto;
+}
+
+.health-strip {
+  flex: 1 1 440px;
+  max-width: 680px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(100px, 1fr));
+  gap: 8px;
+}
+
+.health-item {
+  display: grid;
+  gap: 5px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(27, 36, 48, .88);
+}
+
+.health-item.warn {
+  border-color: rgba(232, 176, 77, .6);
+}
+
+.health-item.danger {
+  border-color: rgba(229, 111, 106, .75);
+}
+
+.health-item .metric-top {
+  align-items: baseline;
+}
+
+.health-item .metric-label {
+  font-size: .66rem;
 }
 
 .eyebrow {
@@ -83,7 +129,7 @@ p {
 
 h1 {
   margin-bottom: 0;
-  font-size: clamp(1.45rem, 2vw, 2.35rem);
+  font-size: clamp(1.25rem, 1.7vw, 1.95rem);
 }
 
 h2 {
@@ -111,7 +157,7 @@ h2 {
 
 .shift-stats div {
   min-width: 84px;
-  padding: 10px 12px;
+  padding: 7px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(27, 36, 48, .88);
@@ -129,8 +175,8 @@ h2 {
 
 .shift-stats strong {
   display: block;
-  margin-top: 3px;
-  font-size: 1.25rem;
+  margin-top: 2px;
+  font-size: 1.15rem;
 }
 
 .command-center {
@@ -209,30 +255,18 @@ h2 {
   font-weight: 800;
 }
 
-.stage-bar {
-  display: grid;
-  grid-template-columns: minmax(180px, .75fr) minmax(260px, 1.35fr) minmax(220px, .9fr);
-  gap: 12px;
-  align-items: center;
-  padding: 12px 14px;
-  border: 1px solid rgba(159, 176, 189, .28);
-  border-radius: 8px;
-  background: rgba(27, 36, 48, .86);
-  box-shadow: var(--shadow);
-}
-
 .next-action-bar {
   position: sticky;
-  top: 8px;
+  top: var(--topbar-h, 0px);
   z-index: 8;
   display: grid;
-  grid-template-columns: minmax(170px, .75fr) minmax(240px, 1.2fr) auto;
+  grid-template-columns: minmax(220px, 1fr) minmax(200px, auto) auto;
   gap: 12px;
   align-items: center;
   padding: 10px 12px;
   border: 1px solid rgba(79, 195, 181, .6);
   border-radius: 8px;
-  background: rgba(25, 38, 47, .98);
+  background: #19262f;
   box-shadow: 0 12px 28px rgba(0, 0, 0, .32);
 }
 
@@ -249,48 +283,29 @@ h2 {
   color: #d9e5e7;
 }
 
+.next-action-bar .eyebrow {
+  margin-bottom: 2px;
+  color: var(--amber);
+}
+
+.next-action-copy h2 {
+  margin-bottom: 2px;
+}
+
+.stage-progress {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+}
+
 .next-action-button {
   min-width: 160px;
 }
 
-.stage-bar h2 {
-  margin-bottom: 0;
-  font-size: 1.08rem;
-}
-
-.stage-bar p {
-  margin-bottom: 0;
-  color: #d9e5e7;
-}
-
-.missing-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  justify-content: flex-end;
-}
-
-.stage-right {
-  display: grid;
-  gap: 7px;
-}
-
 .evidence-progress {
-  justify-self: end;
   color: #e8f3f1;
   font-size: .82rem;
   font-weight: 900;
-}
-
-.missing-list span {
-  border: 1px solid rgba(232, 176, 77, .45);
-  border-radius: 999px;
-  padding: 4px 7px;
-  color: #ffe0a3;
-  background: rgba(232, 176, 77, .1);
-  font-size: .72rem;
-  font-weight: 900;
-  text-transform: uppercase;
 }
 
 .requirement-status {
@@ -412,6 +427,26 @@ h2 {
   opacity: .6;
 }
 
+.queue-closed summary {
+  padding: 6px 2px;
+  color: var(--muted);
+  font-size: .78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.queue-closed-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.queue-empty {
+  margin: 0;
+  padding: 8px 2px;
+}
+
 .queue-item.on-hold {
   opacity: .75;
   border-style: dashed;
@@ -512,62 +547,6 @@ h2 {
   gap: 11px;
 }
 
-.workflow-list {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.workflow-step {
-  display: grid;
-  grid-template-columns: 28px 1fr;
-  gap: 8px;
-  align-items: center;
-  color: var(--muted);
-}
-
-.workflow-step span:first-child {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: .78rem;
-  font-weight: 900;
-}
-
-.workflow-step strong {
-  font-size: .9rem;
-}
-
-.workflow-step.done,
-.workflow-step.active {
-  color: var(--ink);
-}
-
-.workflow-step.done span:first-child {
-  border-color: rgba(125, 207, 131, .72);
-  background: rgba(125, 207, 131, .14);
-  color: #bdffc0;
-}
-
-.workflow-step.active span:first-child {
-  border-color: var(--amber);
-  background: rgba(232, 176, 77, .16);
-  color: #ffd580;
-}
-
-.workflow-hint {
-  margin: 10px 0 0;
-  color: var(--muted);
-  font-size: .8rem;
-  line-height: 1.35;
-}
-
 .resource-row,
 .metric-row {
   display: grid;
@@ -606,7 +585,13 @@ h2 {
 }
 
 .evidence-grid {
-  grid-template-columns: minmax(200px, .82fr) minmax(260px, 1fr) minmax(240px, 1fr) minmax(200px, .78fr);
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+}
+
+.classify-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, .85fr);
 }
 
 .case-facts {
@@ -622,7 +607,7 @@ h2 {
 
 .panel,
 .decision-group {
-  scroll-margin-top: 96px;
+  scroll-margin-top: calc(var(--topbar-h, 0px) + 120px);
 }
 
 .stage-focus {
@@ -1052,8 +1037,13 @@ h2 {
   border-color: rgba(229, 111, 106, .62);
 }
 
+.right-rail {
+  position: sticky;
+  top: calc(var(--topbar-h, 0px) + 12px);
+}
+
 .feed {
-  max-height: 56vh;
+  max-height: calc(100vh - var(--topbar-h, 0px) - 96px);
   overflow: auto;
   padding-right: 4px;
 }
@@ -1401,21 +1391,22 @@ h2 {
 }
 
 @container (max-width: 1080px) {
-  .stage-bar,
   .next-action-bar {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .stage-right,
-  .evidence-progress,
-  .missing-list,
+  .stage-progress {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-items: start;
+  }
+
   .requirement-status {
     justify-content: start;
-    justify-self: stretch;
   }
 
-  .evidence-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .classify-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, .8fr);
   }
 
   .evidence-log {
@@ -1430,6 +1421,7 @@ h2 {
 @container (max-width: 760px) {
   .channel-strip,
   .evidence-grid,
+  .classify-grid,
   .action-grid,
   .troubleshoot-control,
   .resolution-grid {
@@ -1459,21 +1451,29 @@ h2 {
 }
 
 @media (max-width: 1600px) {
+  /* Two columns: queue and the sticky feed share the left column so feedback stays in view. */
   .command-center {
     grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+  }
+
+  .left-rail {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .workbench {
+    grid-column: 2;
+    grid-row: 1 / span 2;
   }
 
   .right-rail {
-    grid-column: 1 / -1;
-    grid-template-columns: minmax(280px, .8fr) minmax(420px, 1.2fr);
+    grid-column: 1;
+    grid-row: 2;
   }
 
-  .score-panel .metric-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .feed {
-    max-height: 320px;
+  .queue-list {
+    max-height: 44vh;
   }
 }
 
@@ -1482,27 +1482,14 @@ h2 {
     grid-template-columns: 280px minmax(0, 1fr);
   }
 
-  .right-rail {
-    grid-column: 1 / -1;
-    grid-template-columns: minmax(260px, .8fr) minmax(320px, 1.2fr);
-  }
-
-  .stage-bar,
-  .evidence-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .classification-panel,
-  .rules-panel {
-    grid-column: auto;
+  .health-strip {
+    order: 3;
+    flex-basis: 100%;
+    max-width: none;
   }
 
   .channel-strip {
     grid-template-columns: repeat(3, 1fr);
-  }
-
-  .feed {
-    max-height: 320px;
   }
 }
 
@@ -1517,11 +1504,38 @@ h2 {
     flex-direction: column;
   }
 
+  .topbar {
+    position: static;
+    margin-top: -10px;
+  }
+
+  .next-action-bar {
+    top: 8px;
+  }
+
+  .command-center {
+    grid-template-rows: none;
+  }
+
+  .left-rail,
+  .workbench,
+  .right-rail {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .right-rail {
+    position: static;
+  }
+
+  .health-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .command-center,
-  .right-rail,
-  .stage-bar,
   .channel-strip,
   .evidence-grid,
+  .classify-grid,
   .category-control,
   .diagnosis-control,
   .troubleshoot-control,
