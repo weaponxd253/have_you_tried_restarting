@@ -6,6 +6,8 @@ const NEUTRAL_TROUBLESHOOTING = ["document_notes"];
 const EXTRA_STEP_PENALTY = 5;
 const DIAGNOSIS_EVIDENCE = ["diagnostics", "question"];
 const PRIORITY_EVIDENCE = ["records", "diagnostics"];
+const HOLD_MINUTES = 30;
+const HOLD_LOG_COST = 2;
 
 const priorities = ["P1", "P2", "P3", "P4"];
 
@@ -49,7 +51,7 @@ const resolutionOptions = [
   { id: "apps", label: "Escalate Apps", cost: 5, resource: "apps", note: "Route SaaS or business app issues." },
   { id: "dispatch", label: "Dispatch Tech", cost: 10, resource: "field", note: "Send limited on-site help." },
   { id: "deny", label: "Deny Request", cost: 4, resource: null, note: "Refuse unsafe or unauthorized work." },
-  { id: "monitor", label: "Monitor", cost: 4, resource: null, note: "Park it and watch for correlation." }
+  { id: "monitor", label: "Monitor", cost: 4, resource: null, note: "Close as watched; reopen only if it recurs." }
 ];
 
 const patternTagLabels = {
@@ -592,6 +594,8 @@ const els = {
   actionHint: document.querySelector("#actionHint"),
   troubleshootHelper: document.querySelector("#troubleshootHelper"),
   resolutionHelper: document.querySelector("#resolutionHelper"),
+  holdButton: document.querySelector("#holdButton"),
+  holdHelper: document.querySelector("#holdHelper"),
   advanceTime: document.querySelector("#advanceTime"),
   endShift: document.querySelector("#endShift"),
   summaryModal: document.querySelector("#summaryModal"),
@@ -746,8 +750,16 @@ function hasEvidence(item, actionIds) {
   return Boolean(item) && actionIds.some((actionId) => item.revealed.includes(actionId));
 }
 
+function workable(item) {
+  return Boolean(item) && item.status !== "resolved" && !item.onHold;
+}
+
+function needsNewSelection() {
+  return !workable(selectedCase());
+}
+
 function classificationUnlocked(item) {
-  return Boolean(item) && item.status !== "resolved" && item.revealed.length > 1;
+  return workable(item) && item.revealed.length > 1;
 }
 
 function requirementItems(item) {
@@ -1203,6 +1215,7 @@ function advance(minutes) {
   state.time += minutes;
   unlockArrivals();
   processScheduled();
+  releaseHolds();
   checkSlaBreaches();
   announceShiftWarning();
   render();
@@ -1213,11 +1226,13 @@ function advance(minutes) {
 }
 
 function slaDueMinute(item) {
-  return item.arrival + (SLA_TARGET_MINUTES[item.risk?.sla] || SLA_TARGET_MINUTES.Low);
+  const heldMinutes = (item.holdMinutes || 0) + (item.onHold ? state.time - item.holdStart : 0);
+  return item.arrival + (SLA_TARGET_MINUTES[item.risk?.sla] || SLA_TARGET_MINUTES.Low) + heldMinutes;
 }
 
 function checkSlaBreaches() {
   openCases().forEach((item) => {
+    if (item.onHold) return;
     const due = slaDueMinute(item);
     if (item.slaBreached || state.time < due) return;
     item.slaBreached = true;
@@ -1226,6 +1241,79 @@ function checkSlaBreaches() {
     addAudit(item, "SLA breached", `${item.risk.sla} response target missed at ${formatTime(due)}.`, due);
     addFeed("SLA breach", `${item.title} waited past its ${item.risk.sla.toLowerCase()} response target.`, "bad", due, null, ["SLA"]);
   });
+}
+
+function holdCostFor(item) {
+  const costs = { trust: -1 };
+  if (item.risk?.sla === "Critical") {
+    costs.trust -= 2;
+    costs.sla = -3;
+  }
+  if (item.securityRisk) {
+    costs.security = -3;
+  }
+  return costs;
+}
+
+function describeHoldCost(costs) {
+  const labels = { trust: "trust", sla: "SLA", security: "security posture" };
+  return Object.entries(costs).map(([metric, amount]) => `${-amount} ${labels[metric]}`).join(", ");
+}
+
+function postponeCurrent() {
+  const current = selectedCase();
+  if (!workable(current) || current.holdUsed) return;
+  const costs = holdCostFor(current);
+  const costly = Boolean(costs.sla || costs.security);
+  current.onHold = true;
+  current.holdUsed = true;
+  current.holdStart = state.time;
+  current.holdUntil = state.time + HOLD_MINUTES;
+  Object.entries(costs).forEach(([metric, amount]) => changeMetric(metric, amount));
+  addAudit(current, "Postponed", `On hold until ${formatTime(current.holdUntil)}. Cost: ${describeHoldCost(costs)}.`);
+  addFeed(
+    "Ticket postponed",
+    `${current.title} is on hold until ${formatTime(current.holdUntil)}; its SLA clock is paused.${costly ? " Parking critical or security-sensitive work cost extra." : ""}`,
+    costly ? "bad" : "neutral",
+    state.time,
+    null,
+    ["Hold"]
+  );
+  const next = openCases().find(workable);
+  if (next) {
+    state.selectedId = next.id;
+    syncSelectionFromCase(next);
+  }
+  advance(HOLD_LOG_COST);
+}
+
+function resumeCase(item, early) {
+  const endedAt = Math.min(state.time, item.holdUntil);
+  item.holdMinutes = (item.holdMinutes || 0) + (endedAt - item.holdStart);
+  item.onHold = false;
+  addAudit(item, early ? "Resumed early" : "Back from hold", `Held for ${endedAt - item.holdStart}m.`, endedAt);
+  if (!early) {
+    addFeed("Back from hold", `${item.title} returned to the live queue.`, "neutral", endedAt, null, ["Hold"]);
+  }
+}
+
+function resumeCurrent() {
+  const current = selectedCase();
+  if (!current?.onHold) return;
+  resumeCase(current, true);
+  render();
+}
+
+function releaseHolds() {
+  state.cases
+    .filter((item) => item.onHold && item.holdUntil <= state.time)
+    .forEach((item) => {
+      resumeCase(item, false);
+      if (needsNewSelection()) {
+        state.selectedId = item.id;
+        syncSelectionFromCase(item);
+      }
+    });
 }
 
 function announceShiftWarning() {
@@ -1241,7 +1329,7 @@ function unlockArrivals() {
       item.status = "new";
       newArrival = true;
       addFeed("New " + item.channel.toLowerCase(), item.title, "neutral", item.arrival, null, ["New"]);
-      if (!selectedCase() || selectedCase().status === "resolved") {
+      if (needsNewSelection()) {
         state.selectedId = item.id;
         syncSelectionFromCase(item);
       }
@@ -1260,7 +1348,7 @@ function processScheduled() {
       const hadOpenWork = openCases().length > 0;
       state.cases.push(item.followUp);
       item.followUp.status = "new";
-      if (!hadOpenWork || !selectedCase() || selectedCase().status === "resolved") {
+      if (!hadOpenWork || needsNewSelection()) {
         state.selectedId = item.followUp.id;
         syncSelectionFromCase(item.followUp);
       }
@@ -1284,6 +1372,15 @@ function currentStage(item) {
       title: "Start Shift",
       hint: "Queue idle.",
       missing: ["Start shift"]
+    };
+  }
+
+  if (item.onHold) {
+    return {
+      id: "hold",
+      title: "On Hold",
+      hint: `Back in the queue at ${formatTime(item.holdUntil)}. SLA clock paused.`,
+      missing: []
     };
   }
 
@@ -1354,6 +1451,15 @@ function nextActionFor(item) {
     };
   }
 
+  if (stage.id === "hold") {
+    return {
+      title: "Ticket On Hold",
+      hint: "Work other tickets while this one waits, or resume it now.",
+      label: "Resume Now",
+      target: "resume"
+    };
+  }
+
   if (stage.id === "investigate") {
     return {
       title: "Gather Evidence",
@@ -1412,6 +1518,10 @@ function jumpToTarget(target) {
     resolution: els.resolutionSection,
     feed: els.feed
   };
+  if (target === "resume") {
+    resumeCurrent();
+    return;
+  }
   const node = targetMap[target] || els.classificationPanel;
   if (target === "queue" && !availableCases().length && futureCases().length) {
     const nextArrival = Math.min(...futureCases().map((item) => item.arrival));
@@ -1425,7 +1535,7 @@ function jumpToTarget(target) {
 }
 
 function reveal(caseItem, actionId) {
-  if (!caseItem || caseItem.status === "resolved" || caseItem.revealed.includes(actionId)) {
+  if (!workable(caseItem) || caseItem.revealed.includes(actionId)) {
     return;
   }
   caseItem.revealed.push(actionId);
@@ -1472,7 +1582,7 @@ function chooseCategory(category) {
 
 function toggleTroubleshooting(stepId) {
   const current = selectedCase();
-  if (!current || current.status === "resolved") {
+  if (!workable(current)) {
     return;
   }
 
@@ -1505,7 +1615,7 @@ function toggleTroubleshooting(stepId) {
 
 function requestResolve(resolutionId) {
   const current = selectedCase();
-  if (!current || current.status === "resolved") {
+  if (!workable(current)) {
     return;
   }
 
@@ -1525,7 +1635,7 @@ function requestResolve(resolutionId) {
 
 function resolveCurrent(resolutionId, readinessSnapshot = null) {
   const current = selectedCase();
-  if (!current || current.status === "resolved") {
+  if (!workable(current)) {
     return;
   }
 
@@ -1558,7 +1668,7 @@ function resolveCurrent(resolutionId, readinessSnapshot = null) {
   advance(option.cost);
   if (state.shiftEnded) return;
 
-  const next = openCases()[0];
+  const next = openCases().find(workable) || openCases()[0];
   state.selectedId = next ? next.id : current.id;
   state.selectedDiagnosis = next ? next.diagnosis : current.diagnosis;
   state.selectedCategory = next ? next.category : current.category;
@@ -2021,6 +2131,8 @@ function showSummary() {
   const warningsAcknowledged = state.cases.reduce((sum, item) => sum + (item.audit || []).filter((entry) => entry.title === "Pre-close warning acknowledged").length, 0);
   const policyWarningsAvoided = reviews.filter((item) => item.quality !== "Policy Violation" && (item.readinessWarnings || []).some((warning) => warning.includes("Would violate") || warning.includes("Security-sensitive"))).length;
   const slaBreaches = state.cases.filter((item) => item.slaBreached).length;
+  const postponed = shiftCases.filter((item) => item.holdUsed).length;
+  const stillHeld = shiftCases.filter((item) => item.onHold).length;
   const repeatedPattern = repeatedPatternFor(shiftCases.filter((item) => !item.isFollowUp));
   const skills = skillBreakdownForReviews(reviews);
   const narrative = skillNarrative(skills);
@@ -2035,6 +2147,7 @@ function showSummary() {
       <li>${resolved} of ${shiftCases.length} incidents that arrived during the shift resolved.</li>
       <li>${clean} clean closes, ${risky} risky closes, ${incomplete} incomplete closes, ${policy} policy violations.</li>
       <li>${slaBreaches} SLA breach${slaBreaches === 1 ? "" : "es"} from tickets left waiting past their response target.</li>
+      <li>${postponed} ticket${postponed === 1 ? "" : "s"} postponed${stillHeld ? `, ${stillHeld} still on hold when the shift ended` : ""}.</li>
       <li>${followUps} follow-up tickets generated and ${major} major consequence${major === 1 ? "" : "s"} recorded.</li>
       <li>${warningsAcknowledged} pre-close warning${warningsAcknowledged === 1 ? "" : "s"} acknowledged and ${policyWarningsAvoided} policy warning${policyWarningsAvoided === 1 ? "" : "s"} avoided.</li>
       <li>${riskyFollowUps} follow-up ticket${riskyFollowUps === 1 ? "" : "s"} came from risky or policy-violating closes.</li>
@@ -2107,6 +2220,28 @@ function render() {
   renderWorkflow(current);
   renderActions(current);
   renderDecision(current);
+  renderHold(current);
+}
+
+function renderHold(item) {
+  let label = "Postpone 30m";
+  let helper = "Select an open incident.";
+  let enabled = false;
+  if (item?.onHold) {
+    label = "Resume Now";
+    helper = `On hold until ${formatTime(item.holdUntil)}. Its SLA clock is paused.`;
+    enabled = true;
+  } else if (workable(item) && item.holdUsed) {
+    helper = "Already postponed once. Work it or close it.";
+  } else if (workable(item)) {
+    helper = `Parks it for ${HOLD_MINUTES}m and pauses its SLA clock. Costs ${describeHoldCost(holdCostFor(item))}. Once per ticket.`;
+    enabled = true;
+  } else if (item) {
+    helper = "Ticket already resolved.";
+  }
+  els.holdButton.textContent = label;
+  els.holdButton.disabled = !enabled;
+  els.holdHelper.textContent = helper;
 }
 
 function renderShiftControl(available) {
@@ -2233,11 +2368,11 @@ function renderQueue(items) {
 
   els.queueList.innerHTML = items.map((item) => {
     const active = item.id === state.selectedId ? " active" : "";
-    const resolved = item.status === "resolved" ? " resolved" : "";
+    const resolved = item.status === "resolved" ? " resolved" : item.onHold ? " on-hold" : "";
     const age = Math.max(0, state.time - item.arrival);
     const stage = stageLabel(item);
     const warning = item.securityRisk && !item.revealed.includes("verify") && item.status !== "resolved";
-    const slaText = item.status === "resolved" ? "" : item.slaBreached ? " | SLA breached" : ` | SLA ${slaDueMinute(item) - state.time}m left`;
+    const slaText = item.status === "resolved" ? "" : item.onHold ? ` | On hold until ${formatTime(item.holdUntil)}` : item.slaBreached ? " | SLA breached" : ` | SLA ${slaDueMinute(item) - state.time}m left`;
     return `
       <button class="queue-item${active}${resolved}" data-select="${item.id}">
         <span class="queue-main">
@@ -2352,7 +2487,7 @@ function renderCase(item) {
 
   els.caseTitle.textContent = item.title;
   els.caseSignals.innerHTML = signalTags(item).map((tag) => `<span>${tag}</span>`).join("");
-  els.caseStatus.textContent = item.status === "resolved" ? `${item.quality} | ${item.score}` : `${item.channel} | ${formatTime(item.arrival)}`;
+  els.caseStatus.textContent = item.status === "resolved" ? `${item.quality} | ${item.score}` : item.onHold ? `On hold until ${formatTime(item.holdUntil)}` : `${item.channel} | ${formatTime(item.arrival)}`;
   els.caseFacts.innerHTML = `
     <dt>Requester</dt><dd>${item.requester}</dd>
     <dt>Department</dt><dd>${item.department}</dd>
@@ -2400,8 +2535,8 @@ function renderRiskLens(item) {
 }
 
 function renderActions(item) {
-  const disabled = !item || item.status === "resolved";
-  els.actionHint.textContent = disabled ? "Select an unresolved incident." : "Every action spends shift time.";
+  const disabled = !workable(item);
+  els.actionHint.textContent = item?.onHold ? "Ticket on hold. Resume it to keep working." : disabled ? "Select an unresolved incident." : "Every action spends shift time.";
 
   els.investigationActions.innerHTML = investigationActions.map((action) => {
     const done = item && item.revealed.includes(action.id);
@@ -2437,7 +2572,7 @@ function renderCloseReadiness(item) {
 }
 
 function renderDecision(item) {
-  const disabled = !item || item.status === "resolved";
+  const disabled = !workable(item);
   const missingClassification = !item || !item.diagnosis || !item.category || !item.priority;
   const classifyDisabled = !classificationUnlocked(item);
   const classifyTitle = classifyDisabled && !disabled ? ' title="Gather at least one piece of evidence before classifying."' : "";
@@ -2447,8 +2582,9 @@ function renderDecision(item) {
   renderCloseReadiness(item);
 
   if (disabled) {
-    els.troubleshootHelper.textContent = item && item.status === "resolved" ? "Ticket already resolved." : "Select an unresolved incident.";
-    els.resolutionHelper.textContent = item && item.status === "resolved" ? "Ticket already resolved." : "Select an unresolved incident.";
+    const lockedText = item?.onHold ? "Ticket on hold. Resume it to keep working." : item && item.status === "resolved" ? "Ticket already resolved." : "Select an unresolved incident.";
+    els.troubleshootHelper.textContent = lockedText;
+    els.resolutionHelper.textContent = lockedText;
   } else if (missingClassification) {
     els.troubleshootHelper.textContent = `Classify first: ${missingNames.join(", ")} missing.`;
     els.resolutionHelper.textContent = "Choose troubleshooting before closing.";
@@ -2528,6 +2664,10 @@ els.ackCloseReview.addEventListener("click", hideCloseReview);
 els.cancelCloseWarning.addEventListener("click", hideCloseWarning);
 els.confirmCloseWarning.addEventListener("click", confirmCloseWarning);
 document.addEventListener("keydown", handleModalKeys);
+els.holdButton.addEventListener("click", () => {
+  if (selectedCase()?.onHold) resumeCurrent();
+  else postponeCurrent();
+});
 els.nextActionButton.addEventListener("click", () => jumpToTarget(els.nextActionButton.dataset.target));
 
 unlockArrivals();

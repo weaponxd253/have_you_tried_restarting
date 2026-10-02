@@ -9,12 +9,12 @@ The player works a live shift where tickets, phone calls, chat messages, monitor
 3. Ask questions or run diagnostic tools.
 4. Assign priority and category.
 5. Choose troubleshooting steps.
-6. Resolve, escalate, dispatch, deny, or close it as monitored.
+6. Resolve, escalate, dispatch, deny, close it as monitored, or postpone it.
 7. Receive consequences and follow-up tickets.
 
 Each choice spends shift time, consumes limited resources, and affects trust, security posture, SLA health, and budget.
 
-The shift ends automatically at 12:00. Every open ticket has a response target based on its SLA risk (Critical 30m, Rising 60m, Low 90m); letting it wait past that target costs SLA health and user trust. Extra troubleshooting steps that do not address the cause are marked down in the close review. Classification unlocks after the first investigation step, and a correct diagnosis or priority only earns full credit when the gathered evidence backs it (diagnostics or follow-up questions for diagnosis, records or diagnostics for priority).
+The shift ends automatically at 12:00. Every open ticket has a response target based on its SLA risk (Critical 30m, Rising 60m, Low 90m); letting it wait past that target costs SLA health and user trust. Extra troubleshooting steps that do not address the cause are marked down in the close review. Postponing puts a ticket on hold for 30 minutes (once per ticket): it stays open, its SLA clock pauses, and it returns to the queue on its own or when resumed. Each postpone costs a little user trust, and parking Critical or security-sensitive work costs SLA and security posture too. Classification unlocks after the first investigation step, and a correct diagnosis or priority only earns full credit when the gathered evidence backs it (diagnostics or follow-up questions for diagnosis, records or diagnostics for priority).
 
 The current layout emphasizes the active ticket stage, with classification visible above the fold, compact channel pressure, and follow-up work returning to the live queue.
 

@@ -412,6 +412,23 @@ h2 {
   opacity: .6;
 }
 
+.queue-item.on-hold {
+  opacity: .75;
+  border-style: dashed;
+}
+
+.hold-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.hold-row .control-helper {
+  flex: 1 1 220px;
+  margin: 0;
+}
+
 .queue-item strong {
   display: block;
   margin-bottom: 4px;
