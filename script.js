@@ -1,5 +1,9 @@
 const START_MINUTE = 8 * 60;
 const SHIFT_END_MINUTE = 12 * 60;
+const SHIFT_WARNING_MINUTE = SHIFT_END_MINUTE - 30;
+const SLA_TARGET_MINUTES = { Critical: 30, Rising: 60, Low: 90 };
+const NEUTRAL_TROUBLESHOOTING = ["document_notes"];
+const EXTRA_STEP_PENALTY = 5;
 
 const priorities = ["P1", "P2", "P3", "P4"];
 
@@ -513,6 +517,8 @@ const initialState = {
   scheduled: [],
   reviews: [],
   seenPatterns: [],
+  shiftWarned: false,
+  shiftEnded: false,
   cases: cases.map((item) => ({
     ...item,
     baseArrival: item.arrival,
@@ -1119,7 +1125,35 @@ function advance(minutes) {
   state.time += minutes;
   unlockArrivals();
   processScheduled();
+  checkSlaBreaches();
+  announceShiftWarning();
   render();
+  if (state.time >= SHIFT_END_MINUTE && !state.shiftEnded) {
+    addFeed("Shift over", `The clock hit ${formatTime(SHIFT_END_MINUTE)}. Remaining work rolls to the next analyst.`, "neutral", state.time, null, ["Shift"]);
+    endShift();
+  }
+}
+
+function slaDueMinute(item) {
+  return item.arrival + (SLA_TARGET_MINUTES[item.risk?.sla] || SLA_TARGET_MINUTES.Low);
+}
+
+function checkSlaBreaches() {
+  openCases().forEach((item) => {
+    const due = slaDueMinute(item);
+    if (item.slaBreached || state.time < due) return;
+    item.slaBreached = true;
+    changeMetric("sla", -4);
+    changeMetric("trust", -2);
+    addAudit(item, "SLA breached", `${item.risk.sla} response target missed at ${formatTime(due)}.`, due);
+    addFeed("SLA breach", `${item.title} waited past its ${item.risk.sla.toLowerCase()} response target.`, "bad", due, null, ["SLA"]);
+  });
+}
+
+function announceShiftWarning() {
+  if (state.shiftWarned || state.time < SHIFT_WARNING_MINUTE || state.time >= SHIFT_END_MINUTE) return;
+  state.shiftWarned = true;
+  addFeed("30 minutes left", `The shift ends at ${formatTime(SHIFT_END_MINUTE)}. Open work will roll over with an SLA penalty.`, "neutral", state.time, null, ["Shift"]);
 }
 
 function unlockArrivals() {
@@ -1437,6 +1471,7 @@ function resolveCurrent(resolutionId, readinessSnapshot = null) {
   state.reviews.unshift(current.review);
   applyResolutionConsequences(current, option, current.evaluation);
   advance(option.cost);
+  if (state.shiftEnded) return;
 
   const next = openCases()[0];
   state.selectedId = next ? next.id : current.id;
@@ -1452,7 +1487,11 @@ function evaluateCase(caseItem) {
   const resolutionCorrect = caseItem.correctResolution === caseItem.resolution || caseItem.acceptAlso.includes(caseItem.resolution);
   const diagnosisCorrect = caseItem.correctDiagnosis === caseItem.diagnosis;
   const categoryCorrect = caseItem.correctCategory === caseItem.category;
-  const troubleshootingCorrect = caseItem.correctTroubleshooting.some((step) => caseItem.troubleshooting.includes(step));
+  const troubleshootingHit = caseItem.correctTroubleshooting.some((step) => caseItem.troubleshooting.includes(step));
+  const extraTroubleshooting = caseItem.troubleshooting.filter((step) => (
+    !caseItem.correctTroubleshooting.includes(step) && !NEUTRAL_TROUBLESHOOTING.includes(step)
+  )).length;
+  const troubleshootingCorrect = troubleshootingHit && extraTroubleshooting === 0;
   const priorityCorrect = caseItem.correctPriority === caseItem.priority;
   const verified = caseItem.revealed.includes("verify");
   const investigated = caseItem.revealed.includes("diagnostics") || caseItem.revealed.includes("records") || caseItem.revealed.includes("question");
@@ -1461,7 +1500,7 @@ function evaluateCase(caseItem) {
 
   if (diagnosisCorrect) score += 15;
   if (categoryCorrect) score += 15;
-  if (troubleshootingCorrect) score += 20;
+  if (troubleshootingHit) score += Math.max(0, 20 - extraTroubleshooting * EXTRA_STEP_PENALTY);
   if (resolutionCorrect) score += 25;
   if (priorityCorrect) score += 15;
   if (verified) score += 5;
@@ -1471,7 +1510,7 @@ function evaluateCase(caseItem) {
     score -= 25;
   }
 
-  if (caseItem.securityRisk && !troubleshootingCorrect && caseItem.resolution !== "deny") {
+  if (caseItem.securityRisk && !troubleshootingHit && caseItem.resolution !== "deny") {
     score -= 10;
   }
 
@@ -1494,6 +1533,7 @@ function evaluateCase(caseItem) {
   if (priorityCorrect) reasons.push("Priority matched the incident impact.");
   else reasons.push(`Priority should have been ${caseItem.correctPriority}.`);
   if (troubleshootingCorrect) reasons.push("Troubleshooting step addressed the likely cause.");
+  else if (troubleshootingHit) reasons.push(`Troubleshooting addressed the likely cause, but ${extraTroubleshooting} unnecessary step${extraTroubleshooting === 1 ? "" : "s"} muddied the record.`);
   else reasons.push("Troubleshooting step did not address the likely cause.");
   if (verified) reasons.push("Identity/risk verification was documented.");
   else if (caseItem.securityRisk) reasons.push("Security-sensitive request closed without identity verification.");
@@ -1529,6 +1569,7 @@ function evaluateCase(caseItem) {
       diagnosisCorrect,
       categoryCorrect,
       troubleshootingCorrect,
+      extraTroubleshooting,
       resolutionCorrect,
       priorityCorrect,
       verified,
@@ -1849,6 +1890,11 @@ function applyResolutionConsequences(caseItem, option, evaluation) {
 function endShift() {
   hideCloseWarning();
   hideCloseReview();
+  if (state.shiftEnded) {
+    showSummary();
+    return;
+  }
+  state.shiftEnded = true;
   const unresolved = openCases().length;
   if (unresolved > 0) {
     changeMetric("sla", -unresolved * 5);
@@ -1859,6 +1905,7 @@ function endShift() {
     state.time = Math.max(state.time, nextMinute);
     processScheduled();
   }
+  render();
   showSummary();
 }
 
@@ -1883,6 +1930,7 @@ function showSummary() {
   const riskyFollowUps = state.cases.filter((item) => item.isFollowUp && item.origin?.quality !== "Clean").length;
   const warningsAcknowledged = state.cases.reduce((sum, item) => sum + (item.audit || []).filter((entry) => entry.title === "Pre-close warning acknowledged").length, 0);
   const policyWarningsAvoided = reviews.filter((item) => item.quality !== "Policy Violation" && (item.readinessWarnings || []).some((warning) => warning.includes("Would violate") || warning.includes("Security-sensitive"))).length;
+  const slaBreaches = state.cases.filter((item) => item.slaBreached).length;
   const repeatedPattern = repeatedPatternFor(state.cases.filter((item) => item.arrival <= state.time && !item.isFollowUp));
   const skills = skillBreakdownForReviews(reviews);
   const narrative = skillNarrative(skills);
@@ -1896,6 +1944,7 @@ function showSummary() {
     <ul class="summary-list">
       <li>${resolved} of ${state.cases.length} incidents resolved.</li>
       <li>${clean} clean closes, ${risky} risky closes, ${incomplete} incomplete closes, ${policy} policy violations.</li>
+      <li>${slaBreaches} SLA breach${slaBreaches === 1 ? "" : "es"} from tickets left waiting past their response target.</li>
       <li>${followUps} follow-up tickets generated and ${major} major consequence${major === 1 ? "" : "s"} recorded.</li>
       <li>${warningsAcknowledged} pre-close warning${warningsAcknowledged === 1 ? "" : "s"} acknowledged and ${policyWarningsAvoided} policy warning${policyWarningsAvoided === 1 ? "" : "s"} avoided.</li>
       <li>${riskyFollowUps} follow-up ticket${riskyFollowUps === 1 ? "" : "s"} came from risky or policy-violating closes.</li>
@@ -2098,11 +2147,12 @@ function renderQueue(items) {
     const age = Math.max(0, state.time - item.arrival);
     const stage = stageLabel(item);
     const warning = item.securityRisk && !item.revealed.includes("verify") && item.status !== "resolved";
+    const slaText = item.status === "resolved" ? "" : item.slaBreached ? " | SLA breached" : ` | SLA ${slaDueMinute(item) - state.time}m left`;
     return `
       <button class="queue-item${active}${resolved}" data-select="${item.id}">
         <span class="queue-main">
           <strong>${item.title}</strong>
-          <span class="queue-meta">${formatTime(item.arrival)} arrival | ${age}m old | ${item.requester}</span>
+          <span class="queue-meta">${formatTime(item.arrival)} arrival | ${age}m old${slaText} | ${item.requester}</span>
           <span class="queue-stage">${stage}${warning ? " | Verify before access changes" : ""}</span>
           <span class="signal-list queue-signals">
             ${signalTags(item).slice(0, 3).map((tag) => `<span>${tag}</span>`).join("")}
@@ -2314,7 +2364,7 @@ function renderDecision(item) {
     els.troubleshootHelper.textContent = "Choose at least one concrete troubleshooting step.";
     els.resolutionHelper.textContent = "Final action unlocks after troubleshooting.";
   } else {
-    els.troubleshootHelper.textContent = "Troubleshooting selected. Additional steps spend more shift time.";
+    els.troubleshootHelper.textContent = "Troubleshooting selected. Unnecessary extra steps cost time and are marked down in review.";
     els.resolutionHelper.textContent = "Ready to choose the final path.";
   }
 
