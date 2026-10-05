@@ -141,7 +141,8 @@ const channelStatus = [
   { id: "Chat", label: "Chat" },
   { id: "Ticket", label: "Tickets" },
   { id: "Monitoring", label: "Alerts" },
-  { id: "Walk-up", label: "Walk-ups" }
+  { id: "Walk-up", label: "Walk-ups" },
+  { id: "Follow-up", label: "Follow-ups" }
 ];
 
 const cases = [
@@ -547,7 +548,9 @@ let pendingResolutionId = null;
 
 const els = {
   clock: document.querySelector("#clock"),
-  queueCount: document.querySelector("#queueCount"),
+  closedCount: document.querySelector("#closedCount"),
+  mobileQueueCount: document.querySelector("#mobileQueueCount"),
+  caseSla: document.querySelector("#caseSla"),
   openCount: document.querySelector("#openCount"),
   queueList: document.querySelector("#queueList"),
   patternHint: document.querySelector("#patternHint"),
@@ -558,8 +561,6 @@ const els = {
   caseSignals: document.querySelector("#caseSignals"),
   caseStatus: document.querySelector("#caseStatus"),
   stageTitle: document.querySelector("#stageTitle"),
-  stageHint: document.querySelector("#stageHint"),
-  stageMissing: document.querySelector("#stageMissing"),
   evidenceProgress: document.querySelector("#evidenceProgress"),
   requirementStatus: document.querySelector("#requirementStatus"),
   nextActionTitle: document.querySelector("#nextActionTitle"),
@@ -578,12 +579,11 @@ const els = {
   troubleshootSection: document.querySelector("#troubleshootSection"),
   resolutionSection: document.querySelector("#resolutionSection"),
   caseFacts: document.querySelector("#caseFacts"),
+  caseMemory: document.querySelector("#caseMemory"),
   evidenceLog: document.querySelector("#evidenceLog"),
   riskLens: document.querySelector("#riskLens"),
   ruleRiskNote: document.querySelector("#ruleRiskNote"),
   rulesList: document.querySelector("#rulesList"),
-  workflowSteps: document.querySelector("#workflowSteps"),
-  workflowHint: document.querySelector("#workflowHint"),
   investigationActions: document.querySelector("#investigationActions"),
   priorityControl: document.querySelector("#priorityControl"),
   diagnosisControl: document.querySelector("#diagnosisControl"),
@@ -616,12 +616,22 @@ const els = {
 
 let modalReturnFocus = null;
 
+// Phone layout shows one of ticket / queue / feed at a time; wider layouts ignore the attribute.
+function setMobileView(view) {
+  document.body.dataset.view = view;
+  document.querySelectorAll(".mobile-tabs [data-view]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.view === view));
+  });
+}
+
 function openModal(modal, initialFocus) {
   if (modal.classList.contains("hidden") && !topModal()) {
     modalReturnFocus = document.activeElement;
   }
   modal.classList.remove("hidden");
-  initialFocus?.focus();
+  const dialog = modal.querySelector(".summary-modal");
+  if (dialog) dialog.scrollTop = 0;
+  initialFocus?.focus({ preventScroll: true });
 }
 
 function closeModal(modal) {
@@ -1140,6 +1150,12 @@ function skillNarrative(skills) {
   const sorted = [...skills].sort((a, b) => b.score - a.score);
   const top = sorted[0];
   const bottom = sorted[sorted.length - 1];
+  if (top.score === bottom.score) {
+    return {
+      strength: top.score > 0 ? `Every tracked skill landed at ${top.score}%.` : "No skill stood out yet.",
+      weakness: top.score === 100 ? "No weak spot this shift." : `Skills were even at ${top.score}%; no single area lagged behind.`
+    };
+  }
   return {
     strength: `${top.label}: ${top.strength}`,
     weakness: `${bottom.label}: ${bottom.weakness}`
@@ -1279,7 +1295,7 @@ function postponeCurrent() {
     null,
     ["Hold"]
   );
-  const next = openCases().find(workable);
+  const next = queueOrder(openCases()).active.find(workable);
   if (next) {
     state.selectedId = next.id;
     syncSelectionFromCase(next);
@@ -1528,7 +1544,8 @@ function jumpToTarget(target) {
     advance(Math.max(1, nextArrival - state.time));
     return;
   }
-  node.scrollIntoView({ behavior: "smooth", block: "center" });
+  setMobileView(target === "queue" || target === "feed" ? target : "ticket");
+  node.scrollIntoView({ behavior: "smooth", block: "start" });
   if (typeof node.focus === "function") {
     node.focus({ preventScroll: true });
   }
@@ -1668,7 +1685,7 @@ function resolveCurrent(resolutionId, readinessSnapshot = null) {
   advance(option.cost);
   if (state.shiftEnded) return;
 
-  const next = openCases().find(workable) || openCases()[0];
+  const next = queueOrder(openCases()).active[0];
   state.selectedId = next ? next.id : current.id;
   state.selectedDiagnosis = next ? next.diagnosis : current.diagnosis;
   state.selectedCategory = next ? next.category : current.category;
@@ -1810,42 +1827,54 @@ function makeCloseReview(caseItem, option) {
   };
 }
 
+function isMissReason(reason) {
+  return /did not|should have|wrong owner|without|violated|violation|unnecessary|, but /i.test(reason);
+}
+
 function showCloseReview(review) {
   els.closeReviewTitle.textContent = review.title;
   els.closeReviewBadge.textContent = `${review.quality} | ${review.severity}`;
   els.closeReviewBadge.className = `review-badge ${review.quality.toLowerCase().replace(/\s+/g, "-")} severity-${review.severity.toLowerCase()}`;
   els.closeReviewBody.innerHTML = `
-    <div class="review-score">
-      <div><span>Score</span><strong>${review.score}</strong></div>
-      <div><span>Verification</span><strong>${review.verification}</strong></div>
-      <div><span>Readiness</span><strong>${review.readinessLabel}</strong></div>
-      <div><span>Follow-up</span><strong>${review.followUpGenerated ? "Queued later" : "None"}</strong></div>
+    <div class="review-verdict">
+      <div class="review-score-big"><span>Score</span><strong>${review.score}</strong></div>
+      <div class="debrief-line lesson">
+        <span>Lesson</span>
+        <p>${review.lesson}</p>
+      </div>
     </div>
-    <dl class="review-grid">
-      <dt>Diagnosis</dt><dd>${review.diagnosis}</dd>
-      <dt>Category</dt><dd>${review.category}</dd>
-      <dt>Priority</dt><dd>${review.priority}</dd>
-      <dt>Troubleshooting</dt><dd>${review.troubleshooting}</dd>
-      <dt>Final Action</dt><dd>${review.finalAction}</dd>
-    </dl>
     <h3>Assessment</h3>
-    <ul class="review-list">
-      ${review.reasons.map((reason) => `<li>${reason}</li>`).join("")}
+    <ul class="review-list assessment">
+      ${review.reasons.map((reason) => `<li class="${isMissReason(reason) ? "miss" : "hit"}">${reason}</li>`).join("")}
     </ul>
-    <div class="debrief-line">
-      <span>Lesson</span>
-      <p>${review.lesson}</p>
-    </div>
     ${review.readinessWarnings.length ? `
       <h3>Warnings Seen Before Close</h3>
       <ul class="review-list">
         ${review.readinessWarnings.map((warning) => `<li>${warning}</li>`).join("")}
       </ul>
     ` : ""}
-    <h3>Audit Trail</h3>
-    <ol class="audit-list">
-      ${review.audit.map((entry) => `<li><span>${formatTime(entry.minute)}</span><strong>${entry.title}</strong><p>${entry.text}</p></li>`).join("")}
-    </ol>
+    <div class="review-score">
+      <div><span>Final Action</span><strong>${review.finalAction}</strong></div>
+      <div><span>Verification</span><strong>${review.verification}</strong></div>
+      <div><span>Readiness</span><strong>${review.readinessLabel}</strong></div>
+      <div><span>Follow-up</span><strong>${review.followUpGenerated ? "Queued later" : "None"}</strong></div>
+    </div>
+    <details class="review-more">
+      <summary>Your decisions</summary>
+      <dl class="review-grid">
+        <dt>Diagnosis</dt><dd>${review.diagnosis}</dd>
+        <dt>Category</dt><dd>${review.category}</dd>
+        <dt>Priority</dt><dd>${review.priority}</dd>
+        <dt>Troubleshooting</dt><dd>${review.troubleshooting}</dd>
+        <dt>Final Action</dt><dd>${review.finalAction}</dd>
+      </dl>
+    </details>
+    <details class="review-more">
+      <summary>Audit trail (${review.audit.length})</summary>
+      <ol class="audit-list">
+        ${review.audit.map((entry) => `<li><span>${formatTime(entry.minute)}</span><strong>${entry.title}</strong><p>${entry.text}</p></li>`).join("")}
+      </ol>
+    </details>
   `;
   openModal(els.closeReviewModal, els.ackCloseReview);
 }
@@ -2103,6 +2132,8 @@ function endShift() {
     state.time = Math.max(state.time, nextMinute);
     processScheduled();
   }
+  // Draining consequences moves the clock; put it back so the board shows the moment the shift ended.
+  state.time = state.shiftEndMinute;
   render();
   showSummary();
 }
@@ -2141,21 +2172,17 @@ function showSummary() {
   const worst = reviews.filter((item) => item.quality !== "Clean").sort((a, b) => a.score - b.score)[0];
 
   els.summaryBody.innerHTML = `
-    <p><strong>${gradeLabel(avg)}</strong> with a shift health score of ${avg}.</p>
-    <p class="shift-seed">Scenario ${state.shiftSeed} | ${modifier.label}</p>
-    <ul class="summary-list">
-      <li>${resolved} of ${shiftCases.length} incidents that arrived during the shift resolved.</li>
-      <li>${clean} clean closes, ${risky} risky closes, ${incomplete} incomplete closes, ${policy} policy violations.</li>
-      <li>${slaBreaches} SLA breach${slaBreaches === 1 ? "" : "es"} from tickets left waiting past their response target.</li>
-      <li>${postponed} ticket${postponed === 1 ? "" : "s"} postponed${stillHeld ? `, ${stillHeld} still on hold when the shift ended` : ""}.</li>
-      <li>${followUps} follow-up tickets generated and ${major} major consequence${major === 1 ? "" : "s"} recorded.</li>
-      <li>${warningsAcknowledged} pre-close warning${warningsAcknowledged === 1 ? "" : "s"} acknowledged and ${policyWarningsAvoided} policy warning${policyWarningsAvoided === 1 ? "" : "s"} avoided.</li>
-      <li>${riskyFollowUps} follow-up ticket${riskyFollowUps === 1 ? "" : "s"} came from risky or policy-violating closes.</li>
-      <li>Most repeated risk pattern: ${repeatedPattern ? `${repeatedPattern.label} across ${repeatedPattern.count} incidents` : "No repeated pattern detected"}.</li>
-      <li>Best triage call: ${best ? `${best.title} (${best.score})` : "None yet"}.</li>
-      <li>Most expensive mistake: ${worst ? `${worst.title} (${worst.quality}, ${worst.severity})` : "None"}.</li>
-      <li>Security ${state.metrics.security}, SLA ${state.metrics.sla}, Trust ${state.metrics.trust}, Budget ${state.metrics.budget}.</li>
-    </ul>
+    <div class="summary-hero ${avg >= 70 ? "good" : avg >= 52 ? "warn" : "bad"}">
+      <span>Shift grade</span>
+      <strong>${gradeLabel(avg)}</strong>
+      <p>Shift health ${avg} | Scenario ${state.shiftSeed} | ${modifier.label}</p>
+    </div>
+    <div class="summary-kpis">
+      <div><span>Resolved</span><strong>${resolved}/${shiftCases.length}</strong></div>
+      <div><span>Clean closes</span><strong>${clean}</strong></div>
+      <div class="${slaBreaches ? "warn" : ""}"><span>SLA breaches</span><strong>${slaBreaches}</strong></div>
+      <div class="${policy ? "bad" : ""}"><span>Policy violations</span><strong>${policy}</strong></div>
+    </div>
     <div class="skill-grid">
       ${skills.map((skill) => `
         <div>
@@ -2172,6 +2199,22 @@ function showSummary() {
       <span>Weak Spot</span>
       <p>${narrative.weakness}</p>
     </div>
+    <details class="review-more">
+      <summary>Shift details</summary>
+      <ul class="summary-list">
+        <li>${resolved} of ${shiftCases.length} incidents that arrived during the shift resolved.</li>
+        <li>${clean} clean closes, ${risky} risky closes, ${incomplete} incomplete closes, ${policy} policy violations.</li>
+        <li>${slaBreaches} SLA breach${slaBreaches === 1 ? "" : "es"} from tickets left waiting past their response target.</li>
+        <li>${postponed} ticket${postponed === 1 ? "" : "s"} postponed${stillHeld ? `, ${stillHeld} still on hold when the shift ended` : ""}.</li>
+        <li>${followUps} follow-up tickets generated and ${major} major consequence${major === 1 ? "" : "s"} recorded.</li>
+        <li>${warningsAcknowledged} pre-close warning${warningsAcknowledged === 1 ? "" : "s"} acknowledged and ${policyWarningsAvoided} policy warning${policyWarningsAvoided === 1 ? "" : "s"} avoided.</li>
+        <li>${riskyFollowUps} follow-up ticket${riskyFollowUps === 1 ? "" : "s"} came from risky or policy-violating closes.</li>
+        <li>Most repeated risk pattern: ${repeatedPattern ? `${repeatedPattern.label} across ${repeatedPattern.count} incidents` : "No repeated pattern detected"}.</li>
+        <li>Best triage call: ${best ? `${best.title} (${best.score})` : "None yet"}.</li>
+        <li>Most expensive mistake: ${worst ? `${worst.title} (${worst.quality}, ${worst.severity})` : "None"}.</li>
+        <li>Security ${state.metrics.security}, SLA ${state.metrics.sla}, Trust ${state.metrics.trust}, Budget ${state.metrics.budget}.</li>
+      </ul>
+    </details>
     <h3>Replay Modifiers</h3>
     <div class="modifier-grid">
       ${replayOptions.map((option) => `
@@ -2182,7 +2225,6 @@ function showSummary() {
         </button>
       `).join("")}
     </div>
-    <p>Audit trails and consequence reviews are now part of the shift record.</p>
   `;
   openModal(els.summaryModal, els.restartGame);
 }
@@ -2202,7 +2244,8 @@ function render() {
   const current = selectedCase();
 
   els.clock.textContent = formatTime(state.time);
-  els.queueCount.textContent = available.length;
+  els.closedCount.textContent = available.length - open.length;
+  els.mobileQueueCount.textContent = open.length ? String(open.length) : "";
   els.openCount.textContent = open.length;
 
   renderShiftControl(available);
@@ -2217,7 +2260,6 @@ function render() {
   renderStageBar(current);
   renderNextAction(current);
   renderStageHighlights(current);
-  renderWorkflow(current);
   renderActions(current);
   renderDecision(current);
   renderHold(current);
@@ -2269,8 +2311,6 @@ function renderPatternHint(open) {
 function renderStageBar(item) {
   const stage = currentStage(item);
   els.stageTitle.textContent = stage.title;
-  els.stageHint.textContent = stage.hint;
-  els.stageMissing.innerHTML = stage.missing.map((missing) => `<span>${missing}</span>`).join("");
   els.evidenceProgress.textContent = item ? `Evidence ${evidenceCount(item)}/${evidenceTotal(item)}` : "Evidence 0/0";
   els.requirementStatus.innerHTML = requirementItems(item).map((requirement) => `
     <span class="${requirement.done ? "done" : ""}">${requirement.done ? "OK" : "--"} ${requirement.label}</span>
@@ -2322,42 +2362,34 @@ function renderStageHighlights(item) {
 }
 
 function renderChannelStatus(open) {
-  const counts = channelStatus.map((channel) => ({
-    ...channel,
-    count: open.filter((item) => item.channel === channel.id).length
-  }));
-
-  els.channelStatus.innerHTML = counts.map((channel) => `
-    <div class="channel-tile ${channel.count ? "active" : ""}">
-      <span>${channel.label}</span>
-      <strong>${channel.count}</strong>
-    </div>
-  `).join("") + `
-    <div class="channel-tile ${state.resources.field.remaining < state.resources.field.max ? "active" : ""}">
-      <span>Dispatch</span>
-      <strong>${state.resources.field.remaining}</strong>
-    </div>
-  `;
+  const counts = channelStatus
+    .map((channel) => ({ ...channel, count: open.filter((item) => item.channel === channel.id).length }))
+    .filter((channel) => channel.count);
+  els.channelStatus.innerHTML = counts.length
+    ? counts.map((channel) => `<span class="channel-chip">${channel.label} <strong>${channel.count}</strong></span>`).join("")
+    : "";
 }
 
-function renderWorkflow(item) {
-  const stage = currentStage(item);
-  const stages = [
-    { id: "ticket", label: "Arrive", full: "Ticket arrives", done: Boolean(item), active: stage.id === "start" },
-    { id: "review", label: "Review", full: "Review user, device, symptoms, history", done: Boolean(item), active: stage.id === "investigate" },
-    { id: "investigate", label: "Investigate", full: "Ask questions or run diagnostics", done: Boolean(item && item.revealed.length > 1), active: stage.id === "investigate" },
-    { id: "classify", label: "Classify", full: "Assign priority and category", done: Boolean(item && item.priority && item.category && item.diagnosis), active: stage.id === "classify" },
-    { id: "troubleshoot", label: "Troubleshoot", full: "Choose troubleshooting steps", done: Boolean(item && item.troubleshooting.length), active: stage.id === "troubleshoot" },
-    { id: "close", label: "Close", full: "Resolve, escalate, dispatch, deny, or monitor", done: Boolean(item && item.status === "resolved"), active: stage.id === "close" },
-    { id: "follow", label: "Follow up", full: "Consequences and follow-up tickets", done: Boolean(item && item.status === "resolved"), active: stage.id === "follow" }
-  ];
+function slaChipFor(item) {
+  if (!item || item.status === "resolved") return null;
+  if (item.onHold) return { text: `On hold to ${formatTime(item.holdUntil)}`, tone: "hold" };
+  if (item.slaBreached) return { text: "SLA breached", tone: "danger" };
+  const left = slaDueMinute(item) - state.time;
+  return { text: `SLA ${left}m`, tone: left <= 10 ? "warn" : "ok" };
+}
 
-  els.workflowSteps.innerHTML = stages.map((stage, index) => {
-    const className = stage.done ? "done" : stage.active ? "active" : "";
-    const marker = stage.done ? "OK" : String(index + 1);
-    return `<li class="workflow-step ${className}" title="${stage.full}"><span>${marker}</span><strong>${stage.label}</strong></li>`;
-  }).join("");
-  els.workflowHint.textContent = stage.hint;
+function slaChipHtml(item) {
+  const chip = slaChipFor(item);
+  return chip ? `<span class="sla-chip ${chip.tone}">${chip.text}</span>` : "";
+}
+
+let closedQueueOpen = false;
+
+function queueOrder(items) {
+  const open = items.filter(workable).sort((a, b) => slaDueMinute(a) - slaDueMinute(b) || a.arrival - b.arrival);
+  const held = items.filter((item) => item.onHold).sort((a, b) => a.holdUntil - b.holdUntil);
+  const closed = items.filter((item) => item.status === "resolved").sort((a, b) => b.arrival - a.arrival);
+  return { active: [...open, ...held], closed };
 }
 
 function renderQueue(items) {
@@ -2366,40 +2398,54 @@ function renderQueue(items) {
     return;
   }
 
-  els.queueList.innerHTML = items.map((item) => {
-    const active = item.id === state.selectedId ? " active" : "";
-    const resolved = item.status === "resolved" ? " resolved" : item.onHold ? " on-hold" : "";
-    const age = Math.max(0, state.time - item.arrival);
-    const stage = stageLabel(item);
-    const warning = item.securityRisk && !item.revealed.includes("verify") && item.status !== "resolved";
-    const slaText = item.status === "resolved" ? "" : item.onHold ? ` | On hold until ${formatTime(item.holdUntil)}` : item.slaBreached ? " | SLA breached" : ` | SLA ${slaDueMinute(item) - state.time}m left`;
-    return `
-      <button class="queue-item${active}${resolved}" data-select="${item.id}">
-        <span class="queue-main">
-          <strong>${item.title}</strong>
-          <span class="queue-meta">${formatTime(item.arrival)} arrival | ${age}m old${slaText} | ${item.requester}</span>
-          <span class="queue-stage">${stage}${warning ? " | Verify before access changes" : ""}</span>
-          <span class="signal-list queue-signals">
-            ${signalTags(item).slice(0, 3).map((tag) => `<span>${tag}</span>`).join("")}
-          </span>
-        </span>
-        <span class="queue-badges">
-          <span class="channel-badge">${item.channel}</span>
-          ${item.category ? `<span class="category-badge">${labelFor(categoryOptions, item.category)}</span>` : ""}
-          ${item.priority ? `<span class="priority-badge">${item.priority}</span>` : ""}
-          ${item.quality ? `<span class="quality-badge severity-${item.severity.toLowerCase()}">${item.quality}</span>` : ""}
-        </span>
-      </button>
-    `;
-  }).join("");
+  const { active, closed } = queueOrder(items);
+  const nextArrival = futureCases()[0];
+  const emptyNote = active.length ? "" : `<p class="queue-meta queue-empty">No open tickets.${nextArrival && !state.shiftEnded ? ` Next arrival around ${formatTime(nextArrival.arrival)}.` : ""}</p>`;
+  const closedGroup = closed.length ? `
+    <details class="queue-closed"${closedQueueOpen ? " open" : ""}>
+      <summary>Closed (${closed.length})</summary>
+      <div class="queue-closed-list">${closed.map(queueItemHtml).join("")}</div>
+    </details>
+  ` : "";
+  els.queueList.innerHTML = emptyNote + active.map(queueItemHtml).join("") + closedGroup;
 
+  els.queueList.querySelector(".queue-closed")?.addEventListener("toggle", (event) => {
+    closedQueueOpen = event.target.open;
+  });
   document.querySelectorAll("[data-select]").forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedId = button.dataset.select;
       syncSelectionFromCase(selectedCase());
+      setMobileView("ticket");
       render();
     });
   });
+}
+
+function queueItemHtml(item) {
+  const active = item.id === state.selectedId ? " active" : "";
+  const resolved = item.status === "resolved" ? " resolved" : item.onHold ? " on-hold" : "";
+  const age = Math.max(0, state.time - item.arrival);
+  const stage = stageLabel(item);
+  const warning = item.securityRisk && !item.revealed.includes("verify") && item.status !== "resolved";
+  return `
+    <button class="queue-item${active}${resolved}" data-select="${item.id}">
+      <span class="queue-main">
+        <strong>${item.title}</strong>
+        <span class="queue-meta">${formatTime(item.arrival)} arrival | ${age}m old | ${item.requester}</span>
+        <span class="queue-stage">${slaChipHtml(item)}<span>${stage}${warning ? " | Verify before access changes" : ""}</span></span>
+        <span class="signal-list queue-signals">
+          ${signalTags(item).slice(0, 3).map((tag) => `<span>${tag}</span>`).join("")}
+        </span>
+      </span>
+      <span class="queue-badges">
+        <span class="channel-badge">${item.channel}</span>
+        ${item.category ? `<span class="category-badge">${labelFor(categoryOptions, item.category)}</span>` : ""}
+        ${item.priority ? `<span class="priority-badge">${item.priority}</span>` : ""}
+        ${item.quality ? `<span class="quality-badge severity-${item.severity.toLowerCase()}">${item.quality}</span>` : ""}
+      </span>
+    </button>
+  `;
 }
 
 function renderResources() {
@@ -2426,7 +2472,7 @@ function renderMetrics() {
   els.metricList.innerHTML = Object.entries(state.metrics).map(([key, value]) => {
     const tone = value < 35 ? "danger" : value < 55 ? "warn" : "";
     return `
-      <div class="metric-row">
+      <div class="health-item ${tone}" title="${labels[key]} ${value}/100">
         <div class="metric-top"><span class="metric-label">${labels[key]}</span><strong>${value}</strong></div>
         <div class="meter ${tone}"><span style="width:${value}%"></span></div>
       </div>
@@ -2463,6 +2509,8 @@ function renderRules() {
   }).join("");
 }
 
+let caseMemoryOpen = false;
+
 function renderAuditPreview(item) {
   const entries = (item.audit || []).slice(0, 5);
   if (!entries.length) return "No audit entries yet";
@@ -2476,6 +2524,8 @@ function renderCase(item) {
     els.caseTitle.textContent = "Shift not started";
     els.caseSignals.innerHTML = "";
     els.caseStatus.textContent = "Ready";
+    els.caseSla.className = "sla-chip hidden";
+    els.caseMemory.innerHTML = "";
     els.caseFacts.innerHTML = `
       <dt>Status</dt><dd>Desk staffed and monitoring systems idle.</dd>
       <dt>Next</dt><dd>Start the shift to receive live work.</dd>
@@ -2487,19 +2537,30 @@ function renderCase(item) {
 
   els.caseTitle.textContent = item.title;
   els.caseSignals.innerHTML = signalTags(item).map((tag) => `<span>${tag}</span>`).join("");
-  els.caseStatus.textContent = item.status === "resolved" ? `${item.quality} | ${item.score}` : item.onHold ? `On hold until ${formatTime(item.holdUntil)}` : `${item.channel} | ${formatTime(item.arrival)}`;
+  els.caseStatus.textContent = item.status === "resolved" ? `${item.quality} | ${item.score}` : `${item.channel} | ${formatTime(item.arrival)}`;
+  const slaChip = slaChipFor(item);
+  els.caseSla.className = slaChip ? `sla-chip ${slaChip.tone}` : "sla-chip hidden";
+  els.caseSla.textContent = slaChip ? slaChip.text : "";
   els.caseFacts.innerHTML = `
     <dt>Requester</dt><dd>${item.requester}</dd>
     <dt>Department</dt><dd>${item.department}</dd>
     <dt>Location</dt><dd>${item.location}</dd>
     <dt>Report</dt><dd>${item.report}</dd>
     ${item.origin ? `<dt>Original Decision</dt><dd>${item.origin.decision} | ${item.origin.quality} | ${item.origin.severity}</dd>` : ""}
+    ${Object.entries(item.facts).map(([key, value]) => `<dt>${key}</dt><dd>${value}</dd>`).join("")}
     <dt>Classification</dt><dd>${item.diagnosis ? labelFor(diagnosisOptions, item.diagnosis) : "Undiagnosed"} | ${item.category ? labelFor(categoryOptions, item.category) : "Uncategorized"} | ${item.priority || "No priority"}</dd>
     <dt>Troubleshooting</dt><dd>${item.troubleshooting.length ? item.troubleshooting.map((step) => labelFor(troubleshootingOptions, step)).join(", ") : "No step chosen"}</dd>
     ${item.quality ? `<dt>Close Review</dt><dd>${item.quality} | ${item.severity} | Score ${item.score}</dd>` : ""}
-    <dt>Case Memory</dt><dd>${renderAuditPreview(item)}</dd>
-    ${Object.entries(item.facts).map(([key, value]) => `<dt>${key}</dt><dd>${value}</dd>`).join("")}
   `;
+  els.caseMemory.innerHTML = `
+    <details class="case-memory-group"${caseMemoryOpen ? " open" : ""}>
+      <summary>Case memory (${(item.audit || []).length})</summary>
+      ${renderAuditPreview(item)}
+    </details>
+  `;
+  els.caseMemory.querySelector("details").addEventListener("toggle", (event) => {
+    caseMemoryOpen = event.target.open;
+  });
 
   const evidence = [...item.evidence];
   item.revealed
@@ -2621,7 +2682,7 @@ function renderDecision(item) {
       <button class="resolution-button ${hint.tone}" data-resolution="${option.id}" title="${hint.text}" ${resolutionDisabled || resourceExhausted(option) ? "disabled" : ""}>
         ${option.label}
         <small>${option.cost}m${option.resource ? ` | ${state.resources[option.resource].remaining} left` : ""}</small>
-        <span class="resolution-risk ${hint.tone}">${hint.text}</span>
+        ${resolutionDisabled ? "" : `<span class="resolution-risk ${hint.tone}">${hint.text}</span>`}
       </button>
     `;
   }).join("");
@@ -2664,6 +2725,21 @@ els.ackCloseReview.addEventListener("click", hideCloseReview);
 els.cancelCloseWarning.addEventListener("click", hideCloseWarning);
 els.confirmCloseWarning.addEventListener("click", confirmCloseWarning);
 document.addEventListener("keydown", handleModalKeys);
+document.querySelectorAll(".mobile-tabs [data-view]").forEach((button) => {
+  button.addEventListener("click", () => {
+    setMobileView(button.dataset.view);
+    window.scrollTo({ top: 0 });
+  });
+});
+const topbar = document.querySelector(".topbar");
+const actionBar = document.querySelector(".next-action-bar");
+new ResizeObserver(() => {
+  document.documentElement.style.setProperty("--topbar-h", `${topbar.offsetHeight}px`);
+  document.documentElement.style.setProperty("--actionbar-h", `${actionBar.offsetHeight}px`);
+}).observe(topbar);
+new ResizeObserver(() => {
+  document.documentElement.style.setProperty("--actionbar-h", `${actionBar.offsetHeight}px`);
+}).observe(actionBar);
 els.holdButton.addEventListener("click", () => {
   if (selectedCase()?.onHold) resumeCurrent();
   else postponeCurrent();

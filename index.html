@@ -6,25 +6,26 @@
   <title>Have You Tried Restarting?</title>
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body data-view="ticket">
   <div class="app-shell">
     <header class="topbar">
-      <div>
+      <div class="topbar-title">
         <p class="eyebrow">Northstar Systems Help Desk</p>
         <h1>Have You Tried Restarting?</h1>
       </div>
+      <div id="metricList" class="health-strip" aria-label="Shift health"></div>
       <div class="shift-stats" aria-label="Shift status">
         <div>
           <span>Clock</span>
           <strong id="clock">08:00</strong>
         </div>
         <div>
-          <span>Queue</span>
-          <strong id="queueCount">0</strong>
-        </div>
-        <div>
           <span>Open</span>
           <strong id="openCount">0</strong>
+        </div>
+        <div>
+          <span>Closed</span>
+          <strong id="closedCount">0</strong>
         </div>
       </div>
     </header>
@@ -36,6 +37,7 @@
             <h2>Live Queue</h2>
             <button class="icon-button shift-button" id="advanceTime" title="Start shift" aria-label="Start shift">Start Shift</button>
           </div>
+          <div id="channelStatus" class="channel-mix" aria-label="Open work by channel"></div>
           <div id="patternHint" class="pattern-hint hidden"></div>
           <div id="queueList" class="queue-list"></div>
         </section>
@@ -43,12 +45,6 @@
         <section class="panel resources-panel">
           <h2>Resources</h2>
           <div id="resourceList" class="resource-list"></div>
-        </section>
-
-        <section class="panel workflow-panel">
-          <h2>Shift Flow</h2>
-          <ol id="workflowSteps" class="workflow-list"></ol>
-          <p id="workflowHint" class="workflow-hint">Start the shift to begin the queue.</p>
         </section>
       </aside>
 
@@ -59,43 +55,46 @@
             <h2 id="caseTitle">No active incident</h2>
             <div id="caseSignals" class="signal-list"></div>
           </div>
-          <div class="status-pill" id="caseStatus">Stand by</div>
+          <div class="case-banner-meta">
+            <span id="caseSla" class="sla-chip hidden"></span>
+            <div class="status-pill" id="caseStatus">Stand by</div>
+          </div>
         </div>
-
-        <section class="stage-bar" aria-live="polite">
-          <div>
-            <p class="eyebrow">Current Stage</p>
-            <h2 id="stageTitle">Start Shift</h2>
-          </div>
-          <p id="stageHint">Start the shift to receive calls, tickets, chats, alerts, and walk-ups.</p>
-          <div class="stage-right">
-            <div id="evidenceProgress" class="evidence-progress"></div>
-            <div id="stageMissing" class="missing-list"></div>
-            <div id="requirementStatus" class="requirement-status"></div>
-          </div>
-        </section>
 
         <section class="next-action-bar" aria-live="polite">
-          <div>
-            <p class="eyebrow">Next Action</p>
+          <div class="next-action-copy">
+            <p class="eyebrow">Stage: <span id="stageTitle">Start Shift</span></p>
             <h2 id="nextActionTitle">Start Shift</h2>
+            <p id="nextActionHint">Start the shift to receive live work.</p>
           </div>
-          <p id="nextActionHint">Start the shift to receive live work.</p>
+          <div class="stage-progress">
+            <div id="evidenceProgress" class="evidence-progress"></div>
+            <div id="requirementStatus" class="requirement-status"></div>
+          </div>
           <button class="primary-button next-action-button" id="nextActionButton">Start Shift</button>
         </section>
-
-        <div class="channel-strip" id="channelStatus" aria-label="Channel status">
-        </div>
 
         <div class="evidence-grid">
           <section class="panel report-panel" id="reportPanel" tabindex="-1">
             <h2>Report</h2>
             <dl class="case-facts" id="caseFacts"></dl>
+            <div id="caseMemory" class="case-memory-slot"></div>
           </section>
           <section class="panel evidence-panel" id="evidencePanel" tabindex="-1">
             <h2>Evidence</h2>
             <div id="evidenceLog" class="evidence-log"></div>
           </section>
+        </div>
+
+        <section class="panel actions-panel" id="actionsPanel" tabindex="-1">
+          <div class="panel-heading">
+            <h2>Investigation</h2>
+            <span id="actionHint">Pick an incident from the queue.</span>
+          </div>
+          <div class="action-grid" id="investigationActions"></div>
+        </section>
+
+        <div class="classify-grid">
           <section class="panel classification-panel" id="classificationPanel" tabindex="-1">
             <h2>Classification</h2>
             <div class="decision-group" id="diagnosisSection" tabindex="-1">
@@ -121,14 +120,6 @@
             <ul id="rulesList"></ul>
           </section>
         </div>
-
-        <section class="panel actions-panel" id="actionsPanel" tabindex="-1">
-          <div class="panel-heading">
-            <h2>Investigation</h2>
-            <span id="actionHint">Pick an incident from the queue.</span>
-          </div>
-          <div class="action-grid" id="investigationActions"></div>
-        </section>
 
         <section class="panel decision-panel" id="decisionPanel" tabindex="-1">
           <div>
@@ -163,11 +154,7 @@
       </section>
 
       <aside class="right-rail" aria-label="Shift feedback">
-        <section class="panel score-panel">
-          <h2>Shift Health</h2>
-          <div id="metricList" class="metric-list"></div>
-        </section>
-        <section class="panel">
+        <section class="panel feed-panel">
           <div class="panel-heading">
             <h2>Supervisor Feed</h2>
             <button class="icon-button" id="endShift" title="End shift" aria-label="End shift">End</button>
@@ -176,6 +163,12 @@
         </section>
       </aside>
     </main>
+
+    <nav class="mobile-tabs" aria-label="Views">
+      <button data-view="ticket" aria-pressed="true">Ticket</button>
+      <button data-view="queue" aria-pressed="false">Queue <span id="mobileQueueCount" class="tab-count"></span></button>
+      <button data-view="feed" aria-pressed="false">Feed</button>
+    </nav>
   </div>
 
   <div class="modal-backdrop hidden" id="closeReviewModal">
@@ -188,7 +181,9 @@
         <div id="closeReviewBadge" class="review-badge">Review</div>
       </div>
       <div id="closeReviewBody"></div>
-      <button id="ackCloseReview" class="primary-button">Acknowledge</button>
+      <div class="modal-footer">
+        <button id="ackCloseReview" class="primary-button">Acknowledge</button>
+      </div>
     </section>
   </div>
 
@@ -213,7 +208,9 @@
     <section class="summary-modal" role="dialog" aria-modal="true" aria-labelledby="summaryTitle">
       <h2 id="summaryTitle">Shift Summary</h2>
       <div id="summaryBody"></div>
-      <button id="restartGame" class="primary-button">Start Standard Shift</button>
+      <div class="modal-footer">
+        <button id="restartGame" class="primary-button">Start Standard Shift</button>
+      </div>
     </section>
   </div>
 
