@@ -1896,3 +1896,54 @@ h2 {
     max-height: none;
   }
 }
+.department[hidden], #workstation[hidden] {
+  display: none;
+}
+
+.department {
+  width: min(960px, calc(100% - 32px));
+  margin: 24px auto;
+}
+
+.department-header, .department-controls, .department-stats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.department-header h1, .department-stats dd {
+  margin: 0;
+}
+
+.department-stats dt {
+  font-size: 0.8rem;
+}
+
+.department-stats dd {
+  color: #8ee6ff;
+  font: bold 1.25rem monospace;
+}
+
+#department-world {
+  aspect-ratio: 4 / 3;
+  background: #101722 url("assets/room.png") center / 100% 100% no-repeat;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.department-controls {
+  margin-top: 12px;
+}
+
+.department-controls kbd {
+  border: 1px solid #60758b;
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+
+.department-notice {
+  min-height: 1.5em;
+  color: #b9e5f2;
+}

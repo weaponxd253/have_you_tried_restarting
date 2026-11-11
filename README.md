@@ -32,4 +32,11 @@ Shift-memory features include compact case memory, tagged supervisor feed events
 
 Learning and replay features include one-line supervisor debrief lessons, derived skill tracking, end-of-shift strengths and weak spots, and replay modifiers for security-heavy, outage-heavy, or lean-staffing shifts. Every shift is a fixed, repeatable scenario identified by a scenario code; there is no randomness.
 
-Open `index.html` in a browser to play the current prototype.
+Open `index.html` in a browser with an internet connection to load Phaser 3.90. The shift starts in a fixed 960 × 720 IT department. Use WASD or the arrow keys to walk and press E near an object.
+
+- **Workstation** opens the ticket interface. Use **Start Shift** there to receive the first incident.
+- **Help-desk phone** can start the shift and opens the next available phone ticket when one is waiting.
+- **Printer** reports its queue status. **Equipment cabinet** shows the shift’s remaining dispatch and escalation resources.
+- **Department exit** ends the shift and opens the existing summary.
+
+`engine.js` owns the shift state and publishes updates used by both `department.js` and the workstation in `script.js`. Walking does not advance the clock. Ticket actions and waiting still spend shift time. The temporary player uses a 128 × 128 sheet with four 32 × 32 frames per row, ordered down, left, right, and up. Replace the generated texture with an imported sheet using that layout to reuse the existing walk animations.

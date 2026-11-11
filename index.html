@@ -7,11 +7,30 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body data-view="ticket">
-  <div class="app-shell">
+  <main id="department" class="department">
+    <header class="department-header">
+      <div>
+        <p class="eyebrow">Northstar Systems</p>
+        <h1>IT Department</h1>
+      </div>
+      <dl class="department-stats">
+        <div><dt>Shift clock</dt><dd id="department-clock"></dd></div>
+        <div><dt>Active tickets</dt><dd id="department-tickets"></dd></div>
+      </dl>
+    </header>
+    <div id="department-world" tabindex="0" aria-label="IT department game world"></div>
+    <footer class="department-controls">
+      <span><kbd>WASD</kbd> / <kbd>↑ ↓ ← →</kbd> Move <kbd>E</kbd> Interact</span>
+      <button type="button" id="department-action" class="primary-button" disabled>Approach an object</button>
+    </footer>
+    <p id="department-notice" class="department-notice" role="status"></p>
+  </main>
+  <div class="app-shell" id="workstation" hidden>
     <header class="topbar">
       <div class="topbar-title">
         <p class="eyebrow">Northstar Systems Help Desk</p>
         <h1>Have You Tried Restarting?</h1>
+        <button type="button" id="return-to-department" class="icon-button">Return to department</button>
       </div>
       <div id="metricList" class="health-strip" aria-label="Shift health"></div>
       <div class="shift-stats" aria-label="Shift status">
@@ -214,6 +233,9 @@
     </section>
   </div>
 
+  <script src="engine.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
+  <script src="department.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
