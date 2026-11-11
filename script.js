@@ -797,6 +797,7 @@ shiftEngine.subscribe((type, detail) => {
   if (type === "summary") {
     hideCloseWarning();
     hideCloseReview();
+    departmentView.show();
     showSummary();
   }
   if (type === "restart") {

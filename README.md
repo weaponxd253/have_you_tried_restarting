@@ -39,4 +39,10 @@ Open `index.html` in a browser with an internet connection to load Phaser 3.90. 
 - **Printer** reports its queue status. **Equipment cabinet** shows the shift’s remaining dispatch and escalation resources.
 - **Department exit** ends the shift and opens the existing summary.
 
-`engine.js` owns the shift state and publishes updates used by both `department.js` and the workstation in `script.js`. Walking does not advance the clock. Ticket actions and waiting still spend shift time. The temporary player uses a 128 × 128 sheet with four 32 × 32 frames per row, ordered down, left, right, and up. Replace the generated texture with an imported sheet using that layout to reuse the existing walk animations.
+`engine.js` owns the shift state and publishes updates used by both `department.js` and the workstation in `script.js`. Walking does not advance the clock. Ticket actions and waiting still spend shift time.
+
+Press E near a coworker to talk. The senior technician walks between her desk and the printer, the manager checks the office and approaches for urgent tickets, and the warehouse liaison stays in the office. Coworkers pause their routes during dialogue and let the player pass through.
+
+When an existing Walk-up ticket arrives, its requester enters from the south doorway and waits near the help desk. **Investigate ticket** opens that incident in the workstation. A held ticket keeps the requester waiting. After the ticket closes, return to the department to see the requester react and leave.
+
+The five character sheets use four 256 × 384 frames per row, ordered down, left, right, and up. Each actor is anchored at its feet, with a ground shadow and depth ordered by floor position.

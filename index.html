@@ -24,6 +24,14 @@
       <button type="button" id="department-action" class="primary-button" disabled>Approach an object</button>
     </footer>
     <p id="department-notice" class="department-notice" role="status"></p>
+    <dialog id="department-dialogue" class="summary-modal" aria-labelledby="dialogue-name">
+      <h2 id="dialogue-name"></h2>
+      <p id="dialogue-line"></p>
+      <div class="modal-actions">
+        <button type="button" id="dialogue-close" class="icon-button">Close</button>
+        <button type="button" id="dialogue-ticket" class="primary-button" hidden>Investigate ticket</button>
+      </div>
+    </dialog>
   </main>
   <div class="app-shell" id="workstation" hidden>
     <header class="topbar">

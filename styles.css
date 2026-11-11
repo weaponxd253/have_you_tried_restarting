@@ -1947,3 +1947,12 @@ h2 {
   min-height: 1.5em;
   color: #b9e5f2;
 }
+
+#department-dialogue {
+  width: min(480px, calc(100% - 32px));
+  margin: auto;
+}
+
+#department-dialogue::backdrop {
+  background: rgb(9 14 22 / 70%);
+}
